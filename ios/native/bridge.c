@@ -7,9 +7,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#ifdef __APPLE__
-#include <sys/sysctl.h>
-#endif
 #define STBI_ONLY_PNG
 #define STBI_ONLY_JPEG
 #define STBI_ONLY_BMP
@@ -356,25 +353,26 @@ static java_native_method methods[] = {
     METHOD("browse","(Ljava/lang/String;)V",browse),METHOD("vibrate","(I)V",vibrate)
 };
 
-static void configure_jvm_memory(MiniJVM *jvm) {
-    int64_t heap_mb = 256;
-    int64_t vm_mb = 768;
-#ifdef __APPLE__
-    uint64_t mem = 0;
-    size_t len = sizeof(mem);
-    if (sysctlbyname("hw.memsize", &mem, &len, NULL, 0) == 0 && mem > 0) {
-        uint64_t ram_mb = mem / (1024ULL * 1024ULL);
-        if (ram_mb <= 1536) {
-            heap_mb = 96;
-            vm_mb = 256;
-        } else if (ram_mb <= 2560) {
-            heap_mb = 160;
-            vm_mb = 384;
-        }
+static int64_t configured_heap_mb = 256;
+static int64_t configured_vm_mb = 768;
+
+void em_configure_memory_bytes(uint64_t physical_bytes) {
+    uint64_t ram_mb = physical_bytes / (1024ULL * 1024ULL);
+    if (ram_mb > 0 && ram_mb <= 1536) {
+        configured_heap_mb = 96;
+        configured_vm_mb = 256;
+    } else if (ram_mb > 0 && ram_mb <= 2560) {
+        configured_heap_mb = 160;
+        configured_vm_mb = 384;
+    } else {
+        configured_heap_mb = 256;
+        configured_vm_mb = 768;
     }
-#endif
-    jvm->max_heap_size = heap_mb * 1024LL * 1024LL;
-    jvm->max_vm_memory = vm_mb * 1024LL * 1024LL;
+}
+
+static void configure_jvm_memory(MiniJVM *jvm) {
+    jvm->max_heap_size = configured_heap_mb * 1024LL * 1024LL;
+    jvm->max_vm_memory = configured_vm_mb * 1024LL * 1024LL;
 }
 
 int em_jar_read_entry(const char *jar_path, const char *entry_name, void **out_data, size_t *out_size) {

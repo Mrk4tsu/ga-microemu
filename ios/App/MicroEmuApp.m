@@ -934,6 +934,7 @@ static UIImage *emIconFromJar(NSURL *jarURL, NSString **outSuiteName) {
 @end
 @implementation AppDelegate
 - (BOOL)application:(UIApplication*)application didFinishLaunchingWithOptions:(NSDictionary*)options {
+    em_configure_memory_bytes([NSProcessInfo processInfo].physicalMemory);
     self.window=[[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
     UINavigationController *navigation=[[UINavigationController alloc] initWithRootViewController:[[LibraryController alloc] initWithStyle:emTableStyle()]];
     navigation.navigationBar.prefersLargeTitles=YES;

@@ -17,6 +17,7 @@ void em_host_open_tab(int tab_id, const char *jar, const char *rms, int width, i
 void em_host_sleep_tab(int tab_id, int sleeping);
 void em_host_close_tab(int tab_id);
 void em_host_shutdown(void);
+void em_configure_memory_bytes(uint64_t physical_bytes);
 void em_event(int type, int a, int b, int c, const char *text);
 void em_tab_event(int tab_id, int type, int a, int b, int c, const char *text);
 void em_reset_events(void);
