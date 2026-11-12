@@ -33,9 +33,11 @@ def generate(runtime, spec_only=False):
             "CODE_SIGNING_REQUIRED": "NO", "CLANG_ENABLE_OBJC_ARC": "YES", "GCC_C_LANGUAGE_STANDARD": "gnu11",
             "HEADER_SEARCH_PATHS": ["$(inherited)", *[str(p) for p in includes]],
             "TARGETED_DEVICE_FAMILY": "1,2", "ENABLE_BITCODE": "NO", "GENERATE_INFOPLIST_FILE": "NO",
-            "INFOPLIST_FILE": "App/Info.plist", "IPHONEOS_DEPLOYMENT_TARGET": "15.0"}},
+            "INFOPLIST_FILE": "App/Info.plist", "IPHONEOS_DEPLOYMENT_TARGET": "15.0",
+            "ASSETCATALOG_COMPILER_APPICON_NAME": "AppIcon"}},
         "targets": {"MicroEmu": {"type": "application", "platform": "iOS",
             "sources": [{"path": _relative_source(p)} for p in sorted(paths)] + [
+                {"path": _relative_source(IOS / "App/Assets.xcassets")},
                 {"path": _relative_source(IOS / "Runtime"), "buildPhase": "resources", "type": "folder"}],
             "dependencies": [{"sdk": name + ".framework"} for name in
                 ("UIKit", "Foundation", "CoreGraphics", "CoreText", "QuartzCore", "AudioToolbox", "UniformTypeIdentifiers", "Security")],

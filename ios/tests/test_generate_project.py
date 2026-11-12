@@ -20,6 +20,7 @@ class GenerateProjectTests(unittest.TestCase):
             target = ios / rel
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("", encoding="utf-8")
+        (ios / "App/Assets.xcassets").mkdir(parents=True, exist_ok=True)
         (ios / "Runtime").mkdir(parents=True, exist_ok=True)
         (root / "microemulator").mkdir(parents=True, exist_ok=True)
         (root / "microemulator/COPYING-AL-2.0").write_text("Apache-2.0", encoding="utf-8")
@@ -49,7 +50,9 @@ class GenerateProjectTests(unittest.TestCase):
                 gen.generate(runtime, spec_only=False)
 
             spec = json.loads((ios / "build/project.json").read_text(encoding="utf-8"))
+            self.assertEqual(spec["settings"]["base"]["ASSETCATALOG_COMPILER_APPICON_NAME"], "AppIcon")
             sources = spec["targets"]["MicroEmu"]["sources"]
+            self.assertIn({"path": "App/Assets.xcassets"}, sources)
             self.assertIn({"path": "Runtime", "buildPhase": "resources", "type": "folder"}, sources)
             self.assertIn({"path": "App/MicroEmuApp.m"}, sources)
             self.assertIn({"path": "native/bridge.c"}, sources)

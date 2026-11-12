@@ -36,12 +36,42 @@ static NSURL *gamesDirectory(void) {
 - (void)touchesCancelled:(NSSet<UITouch*>*)touches withEvent:(UIEvent*)event {[self touchesEnded:touches withEvent:event];}
 @end
 
+@interface GameKeyTextField : UITextField
+@property(nonatomic,copy) void (^onEmptyBackspace)(void);
+@end
+@implementation GameKeyTextField
+- (void)deleteBackward {
+    BOOL wasEmpty=(self.text.length==0);
+    [super deleteBackward];
+    if(wasEmpty && self.onEmptyBackspace)self.onEmptyBackspace();
+}
+@end
+
+@interface GamePadButton : UIButton
+@property(nonatomic,strong) NSArray<NSNumber*> *keyCodes;
+@property(nonatomic,strong) NSTimer *repeatTimer;
+@property(nonatomic,strong) UIColor *idleColor;
+@end
+@implementation GamePadButton
+@end
+
 @interface GameController : UIViewController <UITextFieldDelegate>
 @property(nonatomic,strong) NSURL *jar;
 @property(nonatomic,strong) GameScreen *screen;
+@property(nonatomic,strong) UIView *statusRow;
 @property(nonatomic,strong) UILabel *status;
+@property(nonatomic,strong) UIButton *padToggle;
+@property(nonatomic,strong) UIStackView *numpadGrid;
+@property(nonatomic,strong) UIStackView *dpadGrid;
+@property(nonatomic,strong) NSMutableArray<GamePadButton*> *padButtons;
+@property(nonatomic,strong) UIView *inputBar;
+@property(nonatomic,strong) GameKeyTextField *keyboardField;
+@property(nonatomic,copy) NSString *lastSentText;
+@property(nonatomic,strong) NSArray<NSLayoutConstraint*> *portraitPadConstraints;
+@property(nonatomic,strong) NSArray<NSLayoutConstraint*> *landscapePadConstraints;
+@property(nonatomic,strong) NSArray<NSLayoutConstraint*> *padHiddenConstraints;
+@property(nonatomic) BOOL padHidden;
 @property(nonatomic,strong) CADisplayLink *displayLink;
-@property(nonatomic,strong) NSMutableDictionary<NSNumber*,NSTimer*> *repeatTimers;
 @property(nonatomic,strong) UIAlertController *textModal;
 @property(nonatomic) NSInteger maxTextLength;
 @property(nonatomic) BOOL finished;
@@ -56,26 +86,87 @@ static NSURL *gamesDirectory(void) {
     self.navigationItem.rightBarButtonItems=@[
         [[UIBarButtonItem alloc] initWithTitle:@"Log" style:UIBarButtonItemStylePlain target:self action:@selector(shareLog)],
         [[UIBarButtonItem alloc] initWithTitle:@"Keyboard" style:UIBarButtonItemStylePlain target:self action:@selector(keyboard)]];
-    self.repeatTimers=[NSMutableDictionary new];self.screen=[GameScreen new];self.screen.virtualWidth=480;self.screen.virtualHeight=320;
+    self.padButtons=[NSMutableArray new];self.lastSentText=@"";
+    self.screen=[GameScreen new];self.screen.virtualWidth=480;self.screen.virtualHeight=320;
     self.screen.contentMode=UIViewContentModeScaleAspectFit;self.screen.userInteractionEnabled=YES;self.screen.multipleTouchEnabled=YES;self.screen.layer.magnificationFilter=kCAFilterNearest;
-    self.status=[UILabel new];self.status.text=@"Opening game…";self.status.textColor=UIColor.secondaryLabelColor;self.status.font=[UIFont systemFontOfSize:12];self.status.numberOfLines=2;
-    UIStackView *controls=[[UIStackView alloc] initWithArrangedSubviews:@[[self key:@"L" code:-6],[self key:@"◀" code:-3],[self key:@"▲" code:-1],[self key:@"●" code:-5],[self key:@"▼" code:-2],[self key:@"▶" code:-4],[self key:@"R" code:-7]]];
-    controls.axis=UILayoutConstraintAxisHorizontal;controls.spacing=6;controls.distribution=UIStackViewDistributionFillEqually;
-    UIStackView *numbers=[[UIStackView alloc] initWithArrangedSubviews:@[[self key:@"1" code:'1'],[self key:@"3" code:'3'],[self key:@"7" code:'7'],[self key:@"9" code:'9'],[self key:@"*" code:'*'],[self key:@"0" code:'0'],[self key:@"#" code:'#']]];
-    numbers.spacing=6;numbers.distribution=UIStackViewDistributionFillEqually;
-    for(UIView*v in @[self.screen,self.status,controls,numbers]){v.translatesAutoresizingMaskIntoConstraints=NO;[self.view addSubview:v];}
-    UILayoutGuide *safe=self.view.safeAreaLayoutGuide;
+    self.statusRow=[UIView new];
+    self.status=[UILabel new];self.status.text=@"Opening game…";self.status.textColor=UIColor.secondaryLabelColor;self.status.font=[UIFont systemFontOfSize:12];self.status.numberOfLines=1;
+    self.padToggle=[UIButton buttonWithType:UIButtonTypeSystem];[self.padToggle setTitle:@"Hide Pad" forState:UIControlStateNormal];
+    self.padToggle.titleLabel.font=[UIFont systemFontOfSize:12 weight:UIFontWeightMedium];[self.padToggle addTarget:self action:@selector(togglePad) forControlEvents:UIControlEventTouchUpInside];
+    for(UIView*v in @[self.status,self.padToggle]){v.translatesAutoresizingMaskIntoConstraints=NO;[self.statusRow addSubview:v];}
     [NSLayoutConstraint activateConstraints:@[
-        [self.screen.topAnchor constraintEqualToAnchor:safe.topAnchor constant:4],[self.screen.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor],[self.screen.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor],
-        [self.screen.bottomAnchor constraintEqualToAnchor:self.status.topAnchor constant:-4],
-        [self.status.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor constant:12],[self.status.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor constant:-12],[self.status.heightAnchor constraintEqualToConstant:30],
-        [self.status.bottomAnchor constraintEqualToAnchor:controls.topAnchor constant:-6],
-        [controls.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor constant:8],[controls.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor constant:-8],[controls.heightAnchor constraintEqualToConstant:44],
-        [controls.bottomAnchor constraintEqualToAnchor:numbers.topAnchor constant:-6],
-        [numbers.leadingAnchor constraintEqualToAnchor:controls.leadingAnchor],[numbers.trailingAnchor constraintEqualToAnchor:controls.trailingAnchor],[numbers.heightAnchor constraintEqualToConstant:36],
-        [numbers.bottomAnchor constraintEqualToAnchor:safe.bottomAnchor constant:-6]]];
+        [self.status.leadingAnchor constraintEqualToAnchor:self.statusRow.leadingAnchor constant:12],
+        [self.status.centerYAnchor constraintEqualToAnchor:self.statusRow.centerYAnchor],
+        [self.status.trailingAnchor constraintLessThanOrEqualToAnchor:self.padToggle.leadingAnchor constant:-8],
+        [self.padToggle.trailingAnchor constraintEqualToAnchor:self.statusRow.trailingAnchor constant:-12],
+        [self.padToggle.centerYAnchor constraintEqualToAnchor:self.statusRow.centerYAnchor],
+        [self.statusRow.heightAnchor constraintEqualToConstant:26]]];
+    [self.padToggle setContentCompressionResistancePriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
+    self.numpadGrid=[self gridWithRows:@[
+        @[[self key:@"1" codes:@[@('1')] accent:NO],[self key:@"2" codes:@[@('2')] accent:NO],[self key:@"3" codes:@[@('3')] accent:NO]],
+        @[[self key:@"4" codes:@[@('4')] accent:NO],[self key:@"5" codes:@[@('5')] accent:NO],[self key:@"6" codes:@[@('6')] accent:NO]],
+        @[[self key:@"7" codes:@[@('7')] accent:NO],[self key:@"8" codes:@[@('8')] accent:NO],[self key:@"9" codes:@[@('9')] accent:NO]],
+        @[[self key:@"*" codes:@[@('*')] accent:NO],[self key:@"0" codes:@[@('0')] accent:NO],[self key:@"#" codes:@[@('#')] accent:NO]]]];
+    self.dpadGrid=[self gridWithRows:@[
+        @[[self key:@"L" codes:@[@(-6)] accent:YES],[UIView new],[self key:@"R" codes:@[@(-7)] accent:YES]],
+        @[[self key:@"↖" codes:@[@(-1),@(-3)] accent:NO],[self key:@"↑" codes:@[@(-1)] accent:NO],[self key:@"↗" codes:@[@(-1),@(-4)] accent:NO]],
+        @[[self key:@"←" codes:@[@(-3)] accent:NO],[self key:@"F" codes:@[@(-5)] accent:YES],[self key:@"→" codes:@[@(-4)] accent:NO]],
+        @[[self key:@"↙" codes:@[@(-2),@(-3)] accent:NO],[self key:@"↓" codes:@[@(-2)] accent:NO],[self key:@"↘" codes:@[@(-2),@(-4)] accent:NO]]]];
+    [self setupKeyboardBar];
+    for(UIView*v in @[self.screen,self.statusRow,self.numpadGrid,self.dpadGrid,self.inputBar]){v.translatesAutoresizingMaskIntoConstraints=NO;[self.view addSubview:v];}
+    UILayoutGuide *safe=self.view.safeAreaLayoutGuide;
+    NSLayoutConstraint *aspect=[self.screen.heightAnchor constraintEqualToAnchor:self.screen.widthAnchor multiplier:2.0/3.0];
+    aspect.priority=999;
+    self.portraitPadConstraints=@[
+        [self.screen.topAnchor constraintEqualToAnchor:safe.topAnchor constant:4],
+        [self.screen.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor],
+        [self.screen.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor],
+        aspect,
+        [self.screen.bottomAnchor constraintLessThanOrEqualToAnchor:self.statusRow.topAnchor constant:-4],
+        [self.statusRow.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor],
+        [self.statusRow.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor],
+        [self.statusRow.bottomAnchor constraintEqualToAnchor:self.numpadGrid.topAnchor constant:-6],
+        [self.numpadGrid.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor constant:8],
+        [self.numpadGrid.bottomAnchor constraintEqualToAnchor:safe.bottomAnchor constant:-8],
+        [self.numpadGrid.heightAnchor constraintEqualToConstant:212],
+        [self.dpadGrid.leadingAnchor constraintEqualToAnchor:self.numpadGrid.trailingAnchor constant:4],
+        [self.dpadGrid.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor constant:-8],
+        [self.dpadGrid.bottomAnchor constraintEqualToAnchor:safe.bottomAnchor constant:-8],
+        [self.dpadGrid.heightAnchor constraintEqualToConstant:212],
+        [self.dpadGrid.widthAnchor constraintEqualToAnchor:self.numpadGrid.widthAnchor]];
+    self.landscapePadConstraints=@[
+        [self.numpadGrid.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor constant:8],
+        [self.numpadGrid.centerYAnchor constraintEqualToAnchor:safe.centerYAnchor constant:-10],
+        [self.numpadGrid.widthAnchor constraintEqualToConstant:156],
+        [self.numpadGrid.heightAnchor constraintEqualToConstant:196],
+        [self.dpadGrid.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor constant:-8],
+        [self.dpadGrid.centerYAnchor constraintEqualToAnchor:safe.centerYAnchor constant:-10],
+        [self.dpadGrid.widthAnchor constraintEqualToConstant:156],
+        [self.dpadGrid.heightAnchor constraintEqualToConstant:196],
+        [self.screen.topAnchor constraintEqualToAnchor:safe.topAnchor constant:4],
+        [self.screen.leadingAnchor constraintEqualToAnchor:self.numpadGrid.trailingAnchor constant:8],
+        [self.screen.trailingAnchor constraintEqualToAnchor:self.dpadGrid.leadingAnchor constant:-8],
+        [self.screen.bottomAnchor constraintEqualToAnchor:self.statusRow.topAnchor constant:-4],
+        [self.statusRow.leadingAnchor constraintEqualToAnchor:self.numpadGrid.trailingAnchor constant:8],
+        [self.statusRow.trailingAnchor constraintEqualToAnchor:self.dpadGrid.leadingAnchor constant:-8],
+        [self.statusRow.bottomAnchor constraintEqualToAnchor:safe.bottomAnchor constant:-4]];
+    self.padHiddenConstraints=@[
+        [self.screen.topAnchor constraintEqualToAnchor:safe.topAnchor constant:4],
+        [self.screen.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor],
+        [self.screen.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor],
+        [self.screen.bottomAnchor constraintEqualToAnchor:self.statusRow.topAnchor constant:-4],
+        [self.statusRow.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor],
+        [self.statusRow.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor],
+        [self.statusRow.bottomAnchor constraintEqualToAnchor:safe.bottomAnchor constant:-4]];
+    [NSLayoutConstraint activateConstraints:@[
+        [self.inputBar.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor],
+        [self.inputBar.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor],
+        [self.inputBar.heightAnchor constraintEqualToConstant:48],
+        [self.inputBar.bottomAnchor constraintEqualToAnchor:self.view.keyboardLayoutGuide.topAnchor]]];
+    [self updatePadLayout];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(statusChanged:) name:EmStatusNotification object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(modalChanged:) name:EmModalNotification object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(keyboardWillHide:) name:UIKeyboardWillHideNotification object:nil];
     self.displayLink=[CADisplayLink displayLinkWithTarget:self selector:@selector(frame)];self.displayLink.preferredFramesPerSecond=30;[self.displayLink addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
     self.navigationController.interactivePopGestureRecognizer.enabled=NO;[UIApplication sharedApplication].idleTimerDisabled=YES;
     EmClearFrame();em_reset_events();runtimeActive=YES;
@@ -93,17 +184,119 @@ static NSURL *gamesDirectory(void) {
         }
     });
 }
-- (UIButton*)key:(NSString*)title code:(NSInteger)code {
-    UIButton *button=[UIButton buttonWithType:UIButtonTypeSystem];[button setTitle:title forState:UIControlStateNormal];button.tag=code;
-    button.backgroundColor=[UIColor colorWithWhite:0.15 alpha:1];button.tintColor=UIColor.whiteColor;button.layer.cornerRadius=9;button.titleLabel.font=[UIFont systemFontOfSize:18 weight:UIFontWeightSemibold];
+- (void)viewDidLayoutSubviews {
+    [super viewDidLayoutSubviews];
+    [self updatePadLayout];
+}
+- (void)updatePadLayout {
+    BOOL landscape=self.view.bounds.size.width>self.view.bounds.size.height;
+    [NSLayoutConstraint deactivateConstraints:self.portraitPadConstraints];
+    [NSLayoutConstraint deactivateConstraints:self.landscapePadConstraints];
+    [NSLayoutConstraint deactivateConstraints:self.padHiddenConstraints];
+    self.numpadGrid.hidden=self.padHidden;self.dpadGrid.hidden=self.padHidden;
+    if(self.padHidden)[NSLayoutConstraint activateConstraints:self.padHiddenConstraints];
+    else [NSLayoutConstraint activateConstraints:landscape?self.landscapePadConstraints:self.portraitPadConstraints];
+}
+- (void)togglePad {
+    self.padHidden=!self.padHidden;
+    [self.padToggle setTitle:self.padHidden?@"Show Pad":@"Hide Pad" forState:UIControlStateNormal];
+    [self updatePadLayout];
+}
+- (UIStackView*)gridWithRows:(NSArray<NSArray<UIView*>*>*)rows {
+    NSMutableArray *rowViews=[NSMutableArray new];
+    for(NSArray<UIView*> *cols in rows){
+        UIStackView *row=[[UIStackView alloc] initWithArrangedSubviews:cols];
+        row.axis=UILayoutConstraintAxisHorizontal;row.spacing=4;row.distribution=UIStackViewDistributionFillEqually;
+        [rowViews addObject:row];
+    }
+    UIStackView *grid=[[UIStackView alloc] initWithArrangedSubviews:rowViews];
+    grid.axis=UILayoutConstraintAxisVertical;grid.spacing=4;grid.distribution=UIStackViewDistributionFillEqually;
+    return grid;
+}
+- (GamePadButton*)key:(NSString*)title codes:(NSArray<NSNumber*>*)codes accent:(BOOL)accent {
+    GamePadButton *button=[GamePadButton buttonWithType:UIButtonTypeSystem];[button setTitle:title forState:UIControlStateNormal];
+    button.keyCodes=codes;button.idleColor=[UIColor colorWithWhite:accent?0.23:0.15 alpha:0.95];
+    button.backgroundColor=button.idleColor;button.tintColor=UIColor.whiteColor;button.layer.cornerRadius=10;
+    button.titleLabel.font=[UIFont systemFontOfSize:18 weight:UIFontWeightSemibold];
     [button addTarget:self action:@selector(keyDown:) forControlEvents:UIControlEventTouchDown];
-    [button addTarget:self action:@selector(keyUp:) forControlEvents:UIControlEventTouchUpInside|UIControlEventTouchUpOutside|UIControlEventTouchCancel|UIControlEventTouchDragExit];return button;
+    [button addTarget:self action:@selector(keyUp:) forControlEvents:UIControlEventTouchUpInside|UIControlEventTouchUpOutside|UIControlEventTouchCancel|UIControlEventTouchDragExit];
+    [self.padButtons addObject:button];
+    return button;
 }
-- (void)keyDown:(UIButton*)button {
-    if(self.finished || self.stopping)return;NSNumber *key=@(button.tag);[self.repeatTimers[key] invalidate];em_event(1,(int)button.tag,0,0,NULL);
-    __block int ticks=0;self.repeatTimers[key]=[NSTimer scheduledTimerWithTimeInterval:0.08 repeats:YES block:^(NSTimer*t){if(++ticks>=4)em_event(3,(int)button.tag,0,0,NULL);}];
+- (void)keyDown:(GamePadButton*)button {
+    if(self.finished || self.stopping)return;
+    button.backgroundColor=[UIColor colorWithWhite:0.35 alpha:1];
+    [button.repeatTimer invalidate];
+    for(NSNumber *code in button.keyCodes)em_event(1,code.intValue,0,0,NULL);
+    __block int ticks=0;__weak GamePadButton *weakButton=button;
+    button.repeatTimer=[NSTimer scheduledTimerWithTimeInterval:0.08 repeats:YES block:^(NSTimer*t){
+        GamePadButton *b=weakButton;if(!b)return;
+        if(++ticks>=4)for(NSNumber *code in b.keyCodes)em_event(3,code.intValue,0,0,NULL);
+    }];
 }
-- (void)keyUp:(UIButton*)button {NSNumber *key=@(button.tag);[self.repeatTimers[key] invalidate];[self.repeatTimers removeObjectForKey:key];if(!self.finished)em_event(2,(int)button.tag,0,0,NULL);}
+- (void)keyUp:(GamePadButton*)button {
+    button.backgroundColor=button.idleColor;
+    [button.repeatTimer invalidate];button.repeatTimer=nil;
+    if(!self.finished)for(NSNumber *code in button.keyCodes)em_event(2,code.intValue,0,0,NULL);
+}
+- (void)setupKeyboardBar {
+    self.inputBar=[UIView new];self.inputBar.backgroundColor=[UIColor colorWithWhite:0.1 alpha:0.98];self.inputBar.hidden=YES;
+    UIView *line=[UIView new];line.backgroundColor=[UIColor colorWithWhite:0.25 alpha:1];line.translatesAutoresizingMaskIntoConstraints=NO;
+    self.keyboardField=[GameKeyTextField new];self.keyboardField.delegate=self;
+    self.keyboardField.backgroundColor=[UIColor colorWithWhite:0.18 alpha:1];self.keyboardField.textColor=UIColor.whiteColor;
+    self.keyboardField.font=[UIFont systemFontOfSize:15];self.keyboardField.layer.cornerRadius=8;
+    self.keyboardField.leftView=[[UIView alloc] initWithFrame:CGRectMake(0,0,10,1)];self.keyboardField.leftViewMode=UITextFieldViewModeAlways;
+    self.keyboardField.attributedPlaceholder=[[NSAttributedString alloc] initWithString:@"Nhập văn bản gửi vào game…" attributes:@{NSForegroundColorAttributeName:UIColor.secondaryLabelColor}];
+    self.keyboardField.autocorrectionType=UITextAutocorrectionTypeNo;self.keyboardField.autocapitalizationType=UITextAutocapitalizationTypeNone;
+    self.keyboardField.spellCheckingType=UITextSpellCheckingTypeNo;self.keyboardField.returnKeyType=UIReturnKeySend;
+    [self.keyboardField addTarget:self action:@selector(keyboardTextChanged) forControlEvents:UIControlEventEditingChanged];
+    __weak GameController *weakSelf=self;
+    self.keyboardField.onEmptyBackspace=^{GameController *s=weakSelf;if(!s || s.finished || s.stopping)return;em_event(1,-8,0,0,NULL);em_event(2,-8,0,0,NULL);};
+    UIButton *send=[UIButton buttonWithType:UIButtonTypeSystem];[send setTitle:@"↵" forState:UIControlStateNormal];
+    send.titleLabel.font=[UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];send.backgroundColor=UIColor.systemBlueColor;send.tintColor=UIColor.whiteColor;send.layer.cornerRadius=8;
+    [send addTarget:self action:@selector(keyboardSendReturn) forControlEvents:UIControlEventTouchUpInside];
+    UIButton *done=[UIButton buttonWithType:UIButtonTypeSystem];[done setTitle:@"Xong" forState:UIControlStateNormal];
+    done.titleLabel.font=[UIFont systemFontOfSize:14 weight:UIFontWeightSemibold];done.backgroundColor=[UIColor colorWithWhite:0.24 alpha:1];done.tintColor=UIColor.whiteColor;done.layer.cornerRadius=8;
+    [done addTarget:self action:@selector(hideKeyboard) forControlEvents:UIControlEventTouchUpInside];
+    [self.inputBar addSubview:line];
+    for(UIView *v in @[self.keyboardField,send,done]){v.translatesAutoresizingMaskIntoConstraints=NO;[self.inputBar addSubview:v];}
+    [NSLayoutConstraint activateConstraints:@[
+        [line.topAnchor constraintEqualToAnchor:self.inputBar.topAnchor],[line.leadingAnchor constraintEqualToAnchor:self.inputBar.leadingAnchor],[line.trailingAnchor constraintEqualToAnchor:self.inputBar.trailingAnchor],[line.heightAnchor constraintEqualToConstant:0.5],
+        [self.keyboardField.leadingAnchor constraintEqualToAnchor:self.inputBar.leadingAnchor constant:8],[self.keyboardField.centerYAnchor constraintEqualToAnchor:self.inputBar.centerYAnchor],[self.keyboardField.heightAnchor constraintEqualToConstant:34],
+        [send.leadingAnchor constraintEqualToAnchor:self.keyboardField.trailingAnchor constant:6],[send.centerYAnchor constraintEqualToAnchor:self.inputBar.centerYAnchor],[send.widthAnchor constraintEqualToConstant:40],[send.heightAnchor constraintEqualToConstant:34],
+        [done.leadingAnchor constraintEqualToAnchor:send.trailingAnchor constant:6],[done.trailingAnchor constraintEqualToAnchor:self.inputBar.trailingAnchor constant:-8],[done.centerYAnchor constraintEqualToAnchor:self.inputBar.centerYAnchor],[done.widthAnchor constraintEqualToConstant:54],[done.heightAnchor constraintEqualToConstant:34]]];
+}
+- (void)keyboardTextChanged {
+    if(self.finished || self.stopping || self.keyboardField.markedTextRange)return;
+    NSString *current=self.keyboardField.text?:@"";
+    NSString *previous=self.lastSentText?:@"";
+    if([current isEqualToString:previous])return;
+    NSUInteger common=0,limit=MIN(previous.length,current.length);
+    while(common<limit && [previous characterAtIndex:common]==[current characterAtIndex:common])common++;
+    NSUInteger deletes=previous.length-common;
+    for(NSUInteger i=0;i<deletes;i++){em_event(1,-8,0,0,NULL);em_event(2,-8,0,0,NULL);}
+    NSString *added=[current substringFromIndex:common];
+    if(added.length>0)em_event(12,0,0,0,added.UTF8String);
+    self.lastSentText=[current copy];
+}
+- (void)keyboardSendReturn {
+    if(self.finished || self.stopping)return;
+    [self.keyboardField unmarkText];
+    [self keyboardTextChanged];
+    em_event(1,-5,0,0,NULL);em_event(2,-5,0,0,NULL);
+    self.keyboardField.text=@"";self.lastSentText=@"";
+}
+- (void)hideKeyboard {
+    if(self.keyboardField.isFirstResponder){
+        [self.keyboardField unmarkText];
+        [self keyboardTextChanged];
+        [self.keyboardField resignFirstResponder];
+    }
+    self.keyboardField.text=@"";self.lastSentText=@"";self.inputBar.hidden=YES;
+}
+- (void)keyboardWillHide:(NSNotification*)notification {
+    self.keyboardField.text=@"";self.lastSentText=@"";self.inputBar.hidden=YES;
+}
 - (void)frame {
     int width,height;NSData *data=EmConsumeFrame(&width,&height);if(!data)return;
     CGColorSpaceRef color=CGColorSpaceCreateDeviceRGB();CGDataProviderRef provider=CGDataProviderCreateWithCFData((__bridge CFDataRef)data);
@@ -115,6 +308,7 @@ static NSURL *gamesDirectory(void) {
     NSDictionary *info=notification.object;
     if(info[@"title"]==NSNull.null){[self.textModal dismissViewControllerAnimated:NO completion:nil];self.textModal=nil;return;}
     if(self.finished || self.stopping)return;
+    [self hideKeyboard];
     [self.textModal dismissViewControllerAnimated:NO completion:nil];
     UIAlertController *alert=[UIAlertController alertControllerWithTitle:info[@"title"] message:[info[@"max"] intValue]>0?nil:info[@"value"] preferredStyle:UIAlertControllerStyleAlert];
     self.textModal=alert;self.maxTextLength=[info[@"max"] integerValue];int constraints=[info[@"constraints"] intValue];
@@ -128,7 +322,12 @@ static NSURL *gamesDirectory(void) {
     [self presentViewController:alert animated:YES completion:nil];
 }
 - (BOOL)textField:(UITextField*)field shouldChangeCharactersInRange:(NSRange)range replacementString:(NSString*)replacement {
+    if(field==self.keyboardField)return YES;
     return (NSInteger)field.text.length-(NSInteger)range.length+(NSInteger)replacement.length<=self.maxTextLength;
+}
+- (BOOL)textFieldShouldReturn:(UITextField*)field {
+    if(field==self.keyboardField){[self keyboardSendReturn];return NO;}
+    return YES;
 }
 - (void)shareLog {
     NSURL *log=[[gamesDirectory() URLByDeletingLastPathComponent] URLByAppendingPathComponent:@"microemu.log"];
@@ -137,19 +336,19 @@ static NSURL *gamesDirectory(void) {
 }
 - (void)keyboard {
     if(self.finished || self.stopping || self.presentedViewController)return;
-    UIAlertController *editor=[UIAlertController alertControllerWithTitle:@"Type into game" message:@"Tap a text field in the game first. Text is hidden while you type." preferredStyle:UIAlertControllerStyleAlert];
-    [editor addTextFieldWithConfigurationHandler:^(UITextField*field){field.secureTextEntry=YES;field.autocorrectionType=UITextAutocorrectionTypeNo;field.autocapitalizationType=UITextAutocapitalizationTypeNone;}];
-    [editor addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
-    [editor addAction:[UIAlertAction actionWithTitle:@"Type" style:UIAlertActionStyleDefault handler:^(UIAlertAction*a){NSString *text=editor.textFields.firstObject.text?:@"";em_event(12,0,0,0,text.UTF8String);}]];
-    [self presentViewController:editor animated:YES completion:nil];
+    if(self.keyboardField.isFirstResponder){[self hideKeyboard];return;}
+    self.keyboardField.text=@"";self.lastSentText=@"";
+    self.inputBar.hidden=NO;[self.view bringSubviewToFront:self.inputBar];
+    [self.keyboardField becomeFirstResponder];
 }
 - (void)stop {
     if(self.finished){[self close];return;}if(self.stopping)return;self.stopping=YES;self.status.text=@"Stopping game…";
-    for(NSNumber *key in self.repeatTimers){[self.repeatTimers[key] invalidate];em_event(2,key.intValue,0,0,NULL);}[self.repeatTimers removeAllObjects];
+    [self hideKeyboard];
+    for(GamePadButton *button in self.padButtons){[button.repeatTimer invalidate];button.repeatTimer=nil;}
     [self.textModal dismissViewControllerAnimated:NO completion:nil];self.textModal=nil;em_event(10,0,0,0,NULL);
 }
 - (void)close {[self.displayLink invalidate];self.displayLink=nil;self.navigationController.interactivePopGestureRecognizer.enabled=YES;[self.navigationController popViewControllerAnimated:YES];}
-- (void)dealloc {[[NSNotificationCenter defaultCenter] removeObserver:self];[self.displayLink invalidate];for(NSTimer*t in self.repeatTimers.allValues)[t invalidate];}
+- (void)dealloc {[[NSNotificationCenter defaultCenter] removeObserver:self];[self.displayLink invalidate];for(GamePadButton *button in self.padButtons)[button.repeatTimer invalidate];}
 @end
 
 @interface LibraryController : UITableViewController <UIDocumentPickerDelegate>
