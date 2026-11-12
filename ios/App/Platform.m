@@ -1,0 +1,95 @@
+#import "AppPlatform.h"
+#import <UIKit/UIKit.h>
+#import <CoreText/CoreText.h>
+#import <AudioToolbox/AudioToolbox.h>
+#include "emulator.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+NSString * const EmStatusNotification = @"MicroEmuStatus";
+NSString * const EmModalNotification = @"MicroEmuModal";
+static NSLock *frameLock;
+static NSData *pendingFrame;
+static int pendingWidth,pendingHeight;
+static void initializeFrames(void) {static dispatch_once_t once;dispatch_once(&once, ^{frameLock=[NSLock new];});}
+NSData *EmConsumeFrame(int *width,int *height) {
+    initializeFrames();[frameLock lock];NSData *frame=pendingFrame;pendingFrame=nil;
+    *width=pendingWidth;*height=pendingHeight;[frameLock unlock];return frame;
+}
+void EmClearFrame(void) {initializeFrames();[frameLock lock];pendingFrame=nil;[frameLock unlock];}
+void em_platform_present(const EmSurface *surface) {
+    @autoreleasepool {
+        NSData *frame=[[NSData alloc] initWithBytes:surface->pixels length:(NSUInteger)surface->width*surface->height*4];
+        initializeFrames();[frameLock lock];pendingFrame=frame;pendingWidth=surface->width;pendingHeight=surface->height;[frameLock unlock];
+    }
+}
+static CTFontRef fontFor(int size,int style,int face) {
+    CFStringRef name=face==32?CFSTR("Menlo"):CFSTR("Helvetica");
+    CTFontRef font=CTFontCreateWithName(name,size,NULL);
+    CTFontSymbolicTraits traits=0;if(style&1)traits|=kCTFontBoldTrait;if(style&2)traits|=kCTFontItalicTrait;
+    if(traits){CTFontRef styled=CTFontCreateCopyWithSymbolicTraits(font,0,NULL,traits,traits);if(styled){CFRelease(font);font=styled;}}
+    return font;
+}
+int em_platform_text_width(const char *text,int size,int style,int face) {
+    @autoreleasepool {
+        NSString *string=[[NSString alloc] initWithUTF8String:text];if(!string)return 0;
+        CTFontRef font=fontFor(size,style,face);
+        NSAttributedString *value=[[NSAttributedString alloc] initWithString:string attributes:@{(__bridge NSString*)kCTFontAttributeName:(__bridge id)font}];
+        CTLineRef line=CTLineCreateWithAttributedString((__bridge CFAttributedStringRef)value);
+        int width=(int)ceil(CTLineGetTypographicBounds(line,NULL,NULL,NULL));CFRelease(line);CFRelease(font);return width;
+    }
+}
+void em_platform_text(EmSurface *surface,const char *text,const int *args) {
+    @autoreleasepool {
+        NSString *string=[[NSString alloc] initWithUTF8String:text];if(!string || !string.length)return;
+        CTFontRef font=fontFor(args[14],args[15],args[16]);
+        NSAttributedString *value=[[NSAttributedString alloc] initWithString:string attributes:@{
+            (__bridge NSString*)kCTFontAttributeName:(__bridge id)font,
+            (__bridge NSString*)kCTForegroundColorFromContextAttributeName:@YES}];
+        CTLineRef line=CTLineCreateWithAttributedString((__bridge CFAttributedStringRef)value);
+        int width=(int)ceil(CTLineGetTypographicBounds(line,NULL,NULL,NULL))+2,height=args[14]+6;
+        if(width>0 && width<=8192 && height>0 && height<=128){
+            unsigned char *mask=calloc((size_t)width,height);CGColorSpaceRef gray=CGColorSpaceCreateDeviceGray();
+            CGContextRef context=mask?CGBitmapContextCreate(mask,width,height,8,width,gray,kCGImageAlphaNone):NULL;
+            if(context){
+                CGContextSetGrayFillColor(context,1,1);CGContextSetTextPosition(context,0,height-args[14]);CTLineDraw(line,context);
+                for(int y=0;y<height;y++)for(int x=0;x<width;x++){
+                    uint32_t alpha=mask[(height-1-y)*width+x];
+                    em_blend(surface,args[6]+x,args[7]+y,(alpha<<24)|(uint32_t)args[0],args+1);
+                }
+                if(args[15]&4)for(int x=0;x<width-2;x++)em_blend(surface,args[6]+x,args[7]+args[14]+1,0xff000000u|(uint32_t)args[0],args+1);
+                CGContextRelease(context);
+            }
+            CGColorSpaceRelease(gray);free(mask);
+        }
+        CFRelease(line);CFRelease(font);
+    }
+}
+void em_platform_status(const char *text) {
+    @autoreleasepool {
+        NSString *value=[[NSString alloc] initWithUTF8String:text]?:@"Runtime error";
+        fprintf(stdout,"[STATUS] %s\n",text);fflush(stdout);
+        dispatch_async(dispatch_get_main_queue(), ^{[[NSNotificationCenter defaultCenter] postNotificationName:EmStatusNotification object:value];});
+    }
+}
+void em_platform_modal(const char *title,const char *value,int maxSize,int constraints,const char **labels,int count) {
+    @autoreleasepool {
+        NSString *heading=title?[[NSString alloc] initWithUTF8String:title]:nil;
+        NSString *body=value?[[NSString alloc] initWithUTF8String:value]:@"";
+        NSMutableArray *commands=[NSMutableArray new];for(int i=0;i<count;i++){
+            NSString *label=labels[i]?[[NSString alloc] initWithUTF8String:labels[i]]:@"";[commands addObject:label?:@""];
+        }
+        NSDictionary *info=@{@"title":heading?:[NSNull null],@"value":body?:@"",@"max":@(maxSize),@"constraints":@(constraints),@"commands":commands};
+        dispatch_async(dispatch_get_main_queue(), ^{[[NSNotificationCenter defaultCenter] postNotificationName:EmModalNotification object:info];});
+    }
+}
+void em_platform_browse(const char *url) {
+    @autoreleasepool {
+        NSURL *value=[NSURL URLWithString:[[NSString alloc] initWithUTF8String:url]?:@""];
+        if(![@[@"http",@"https"] containsObject:value.scheme.lowercaseString])return;
+        dispatch_async(dispatch_get_main_queue(), ^{[[UIApplication sharedApplication] openURL:value options:@{} completionHandler:nil];});
+    }
+}
+void em_platform_vibrate(int milliseconds) {if(milliseconds>0)dispatch_async(dispatch_get_main_queue(), ^{AudioServicesPlaySystemSound(kSystemSoundID_Vibrate);});}
+void em_platform_tick(void) { }

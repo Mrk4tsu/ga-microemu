@@ -1,0 +1,78 @@
+name: Build iPhone IPA
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'ios/**'
+      - 'microemulator/microemu-cldc/**'
+      - 'microemulator/microemu-midp/**'
+      - '.github/workflows/ios-ipa.yml'
+  pull_request:
+    paths:
+      - 'ios/**'
+      - 'microemulator/microemu-cldc/**'
+      - 'microemulator/microemu-midp/**'
+      - '.github/workflows/ios-ipa.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Select Xcode and install project generator
+        run: |
+          xcodebuild -version
+          command -v xcodegen >/dev/null || brew install xcodegen
+      - name: Prepare interpreter and Java ME libraries
+        run: |
+          python3 -m unittest discover -s ios/tests -p 'test_*.py'
+          python3 ios/tools/prepare_runtime.py
+          python3 ios/tools/build_java.py
+      - name: Test renderer, RMS and networking with the interpreter
+        run: |
+          cmake -S ios -B ios/build/host -DCMAKE_BUILD_TYPE=Release
+          cmake --build ios/build/host --parallel 3
+          ctest --test-dir ios/build/host --output-on-failure
+          python3 ios/tools/run_smoke.py --executable ios/build/host/microemu-headless
+      - name: Generate Xcode project
+        run: python3 ios/tools/generate_project.py
+      - name: Build unsigned iPhone app
+        run: |
+          set -o pipefail
+          xcodebuild -project ios/MicroEmu.xcodeproj -scheme MicroEmu \
+            -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' \
+            -derivedDataPath ios/build/xcode \
+            ARCHS=arm64 CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY='' \
+            build 2>&1 | tee ios/build/xcodebuild.log
+      - name: Package IPA for Sideloadly
+        run: |
+          python3 ios/tools/package_ipa.py \
+            ios/build/xcode/Build/Products/Release-iphoneos/MicroEmu.app \
+            ios/build/MicroEmu-unsigned.ipa
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MicroEmu-unsigned-IPA
+          path: ios/build/MicroEmu-unsigned.ipa
+          if-no-files-found: error
+      - name: Save build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-build-diagnostics
+          path: |
+            ios/build/xcodebuild.log
+            ios/build/host/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore

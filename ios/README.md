@@ -1,0 +1,101 @@
+# MicroEmu cho iPhone
+
+Bản port iOS mới sử dụng API MIDP/CLDC của MicroEmulator, JVM thông dịch miniJVM và bộ vẽ C. App nhập JAR từ Files, chạy game trong máy, có cảm ứng, phím ảo, hộp nhập văn bản và RMS lưu riêng cho từng game. Không cần JIT hoặc jailbreak theo thiết kế này.
+
+Đây là bản triển khai đầu tiên. **Chưa có kết quả build Xcode hoặc kiểm thử trên iPhone thật.** Bộ thông dịch, lớp Java ME và bộ vẽ đã được build/chạy thử trên Windows. GitHub Actions sẽ kiểm tra phần dùng chung trước khi build iOS.
+
+## Build IPA bằng GitHub Actions
+
+1. Đẩy các thay đổi này vào fork GitHub của bạn.
+2. Mở **Actions → Build iPhone IPA → Run workflow**.
+3. Khi workflow thành công, tải artifact **MicroEmu-unsigned-IPA**.
+4. Giải nén artifact để lấy `MicroEmu-unsigned.ipa`, ký/cài bằng Sideloadly.
+5. Mở MicroEmu trên iPhone, chọn **Import JAR**, chọn game rồi chạm tên game để chạy.
+
+Workflow dùng runner `macos-15`, JDK 17 và Xcode. CI không cần certificate, provisioning profile hoặc Apple ID. App được build bằng SDK `iphoneos`, và bước đóng gói kiểm tra Mach-O ARM64 dành cho thiết bị để tránh đóng nhầm bản Simulator.
+
+Đích triển khai: iOS 15 trở lên, iPhone/iPad; độ phân giải game hiện cố định 480 × 320. Giao diện app xoay được và giữ tỷ lệ màn hình game. Có thể dùng Files → On My iPhone → MicroEmu để quản lý thư mục `Games`. Nút **Log** xuất log của lần chạy hiện tại. Với game tự vẽ ô nhập trong Canvas, chạm ô nhập rồi dùng **Keyboard** để gửi chữ vào game; hộp nhập này che nội dung khi gõ.
+
+## Phạm vi hỗ trợ hiện tại
+
+| Thành phần | Trạng thái |
+|---|---|
+| Nạp class và tài nguyên từ JAR sau khi cài app | Có; classloader đọc trực tiếp archive |
+| MIDlet, Canvas, GameCanvas, Image, Graphics, Font | Có; bộ vẽ raster C, CoreText cho chữ trên iOS |
+| Cảm ứng, phím bấm, lặp phím, soft key | Có |
+| TextBox, Command, Alert | Có; nhập liệu qua giao diện iOS |
+| RMS | Có; snapshot có phục hồi và giữ thứ tự ID, tách dữ liệu theo vendor/tên game |
+| TCP, HTTP | Sử dụng GCF/networking gốc của miniJVM; đã kiểm thử luồng dữ liệu thật trên loopback |
+| HTTPS | Có trong runtime; chưa kiểm thử trong bản port này |
+| Form, List, ChoiceGroup, CustomItem, DateField, Gauge, TextField/Item | Chưa có giao diện iOS; trả lỗi rõ khi game yêu cầu |
+| Âm thanh MMAPI, JSR-75, Bluetooth, SMS | Chưa tích hợp |
+| Chạy game liên tục dưới nền/khóa màn hình | Không được bảo đảm; có chuyển tiếp pause/resume |
+
+Không phải mọi file `.jar` đều là MIDlet hoặc dùng các API đã hỗ trợ. Đạt kiểm thử nạp game không đồng nghĩa đã chơi online, đăng nhập hoặc vào map thành công.
+
+## Kết quả với GaMod.jar
+
+File thử: GaMod 2.5.0, MIDlet `vn.gamod.client.GameMidlet`, CLDC 1.1 / MIDP 2.0; 214 class, classfile version 45. File JAR của người dùng không được đưa vào repo hoặc IPA.
+
+- Khởi động bằng cùng bộ thông dịch và bộ vẽ của bản port: **đạt**.
+- Hiển thị logo và màn hình **Tải dữ liệu**: **đạt**; lần thử 18 giây vẽ 333 khung hình, thoát bình thường.
+- Lần thử có thao tác tải dữ liệu: log native xác nhận kết nối TCP tới server game `112.213.94.23:14445` thành công, gửi/nhận dữ liệu hai chiều, gồm các lần đọc buffer 130, 1468, 820 byte và nhiều gói khác. Một lần thử trước đó kết nối thất bại; chưa xác nhận độ ổn định kết nối.
+- Hoàn thành tải tài nguyên và hiện menu chính với nền núi, các nút Chơi mới/Đổi tài khoản/Máy chủ/Cấu hình: **đạt**. Dữ liệu RMS sau tải khoảng 788 KB; mở lại game dùng được dữ liệu đã lưu.
+- Mở màn hình đăng nhập và nhập tài khoản qua phím ký tự/Keyboard: **đạt**.
+- Dùng tài khoản kiểm thử người dùng cung cấp để đăng nhập **Vũ trụ 1**, nhận thông tin map, hiển thị nhân vật/người chơi khác/hiệu ứng và di chuyển làm camera cuộn: **đạt trên host Windows với JVM thông dịch**. Chưa kiểm thử riêng mọi loại quái hoặc toàn bộ chức năng game.
+- Client báo `TASK_GET ... IndexOutOfBoundsException: EOF at 402, need 1` khi đọc dữ liệu nhiệm vụ. Lỗi không ngăn lần thử vào map; chưa kết luận nguyên nhân từ JAR, runtime hay phiên bản giao thức server. Chưa sửa file JAR nguồn.
+- Xcode build, ký/cài bằng Sideloadly và chạy trên iPhone thật: **chưa kiểm thử**.
+
+Ảnh và log kiểm thử cục bộ nằm trong `ios/build/`, không được commit.
+
+## Kiểm thử phần dùng chung
+
+```sh
+python3 ios/tools/prepare_runtime.py
+python3 ios/tools/build_java.py
+cmake -S ios -B ios/build/host -DCMAKE_BUILD_TYPE=Release
+cmake --build ios/build/host --parallel 3
+ctest --test-dir ios/build/host --output-on-failure
+python3 ios/tools/run_smoke.py --executable ios/build/host/microemu-headless
+```
+
+Trên Windows dùng executable trong `ios/build/host/Release/microemu-headless.exe`. Có thể truyền `--runtime PATH` cho hai script đầu để dùng checkout miniJVM có sẵn, nhưng revision phải khớp pin.
+
+Các bài kiểm thử chạy Java trên JVM thông dịch thật, không giả lập lời gọi native: cắt vùng/translation, cả 8 phép transform MIDP, alpha, RMS đóng/mở lại và ID đã xóa, nhiều handle RMS, TCP chứa byte 0/127/128/255 và HTTP từ server thử nghiệm cục bộ. Mỗi lần smoke test khởi động/dừng JVM hai lần trong cùng tiến trình để kiểm tra việc mở lại game. Kiểm thử đóng gói riêng xác nhận loại binary Simulator và giữ quyền thực thi. Test fail sẽ chặn build IPA.
+
+Để phân tích và chạy JAR riêng:
+
+```sh
+python3 ios/tools/inspect_midlet.py /path/to/game.jar
+ios/build/host/microemu-headless \
+  /absolute/path/ios/Resources/minijvm_rt.jar \
+  /absolute/path/ios/Resources/microemu-ios.jar \
+  /absolute/path/game.jar /absolute/path/rms 20 /absolute/path/frame.png
+```
+
+Tham số tùy chọn tiếp theo là file sự kiện; mỗi dòng `milliseconds type a b`. Type: 1/2/3 = nhấn/thả/lặp phím, 4/5/6 = chạm/kéo/thả cảm ứng, 8/9 = pause/resume, 10 = dừng. Tham số cuối là đường dẫn font TTF cho bộ vẽ chữ headless. Khi không cung cấp font, glyph bitmap của game vẫn được vẽ, chữ dùng font hệ thống trong bản headless có thể không xuất hiện.
+
+## Build iOS trên Mac hoặc CI
+
+Sau khi build Java và kiểm thử host:
+
+```sh
+brew install xcodegen
+python3 ios/tools/generate_project.py
+xcodebuild -project ios/MicroEmu.xcodeproj -scheme MicroEmu \
+  -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' \
+  -derivedDataPath ios/build/xcode CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+python3 ios/tools/package_ipa.py \
+  ios/build/xcode/Build/Products/Release-iphoneos/MicroEmu.app \
+  ios/build/MicroEmu-unsigned.ipa
+```
+
+Không build module `microemu-iphone` cũ. Bản port mới không dùng shell launcher, JamVM hệ thống, JocStrap, SDK WeChat hoặc các SDK thương mại trong ứng dụng mobile mẫu của miniJVM.
+
+## Phụ thuộc và thay đổi tương thích
+
+miniJVM được pin tại `76f904ea4008a8058db5155bf5ee2cfe94d19e60`. `prepare_runtime.py` kiểm tra revision, buộc tắt JIT, loại khả năng tạo subprocess trên iOS, bổ sung cleanup monitor sau `Thread.exit()` và log kết quả TCP connect. SLJIT không được đưa vào binary. Script có kiểm tra cấu trúc trước khi áp dụng và có thể chạy lại.
+
+`build_java.py` giữ bản CLDC networking của miniJVM, tránh đóng gói trùng `javax.microedition.io`; một overlay nguồn thay bốn phép `Calendar.add(DAY_OF_MONTH, …)` trong DateField bằng `set/get` vì bootstrap Calendar chỉ có API CLDC. Các module desktop của MicroEmulator giữ nguyên.
+
+MicroEmulator giữ nguyên thông tin tác giả và giấy phép có trong repo. Bootstrap Java của miniJVM gồm MIT và GPLv2 với Classpath exception; thư viện native có các giấy phép kèm nguồn. Bản build sao chép notice vào `Resources/ThirdParty` trong app. Các thay đổi mới trong `ios/` được cung cấp theo Apache-2.0.

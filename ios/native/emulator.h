@@ -1,0 +1,29 @@
+#ifndef MICROEMU_IOS_EMULATOR_H
+#define MICROEMU_IOS_EMULATOR_H
+#include <stdint.h>
+#include <stddef.h>
+
+typedef struct EmSurface {
+    uint64_t id;
+    int width, height;
+    uint32_t *pixels; /* straight alpha, 0xAARRGGBB */
+    struct EmSurface *next;
+} EmSurface;
+
+int em_run(const char *bootstrap, const char *classpath, const char *jar,
+           const char *rms, int width, int height);
+void em_event(int type, int a, int b, int c, const char *text);
+void em_reset_events(void);
+void em_blend(EmSurface *surface, int x, int y, uint32_t argb, const int *clip);
+void em_raster(EmSurface *target, EmSurface *source, int operation, const int *args, const char *text);
+
+/* Platform functions: UIKit/CoreText in the app; deterministic headless host in tests. */
+void em_platform_present(const EmSurface *surface);
+int em_platform_text_width(const char *text, int size, int style, int face);
+void em_platform_text(EmSurface *surface, const char *text, const int *args);
+void em_platform_modal(const char *title, const char *value, int max_size, int constraints, const char **labels, int count);
+void em_platform_status(const char *text);
+void em_platform_browse(const char *url);
+void em_platform_vibrate(int milliseconds);
+void em_platform_tick(void);
+#endif
