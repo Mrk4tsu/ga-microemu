@@ -1,5 +1,6 @@
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
+#import <CommonCrypto/CommonDigest.h>
 #import "AppPlatform.h"
 #include "emulator.h"
 #include <math.h>
@@ -132,6 +133,56 @@ static UIImage *emIconFromJar(NSURL *jarURL, NSString **outSuiteName) {
         if(decoded)return emRenderSquareIcon(decoded);
     }
     return emFallbackJarIcon();
+}
+static NSString *emSuiteKeyForJar(NSURL *jarURL) {
+    NSDictionary<NSString*,NSString*> *manifest=emParseManifest(jarURL);
+    if(!manifest.count)return nil;
+    NSString *vendor=manifest[@"MIDlet-Vendor"]?:@"null";
+    NSString *name=manifest[@"MIDlet-Name"]?:@"MIDlet";
+    NSString *input=[NSString stringWithFormat:@"%@\n%@",vendor,name];
+    NSData *utf8=[input dataUsingEncoding:NSUTF8StringEncoding];
+    if(!utf8)return nil;
+    unsigned char digest[CC_SHA1_DIGEST_LENGTH];
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    CC_SHA1(utf8.bytes,(CC_LONG)utf8.length,digest);
+#pragma clang diagnostic pop
+    NSMutableString *hex=[NSMutableString stringWithCapacity:CC_SHA1_DIGEST_LENGTH*2];
+    for(int i=0;i<CC_SHA1_DIGEST_LENGTH;i++)[hex appendFormat:@"%02x",digest[i]];
+    return hex;
+}
+static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remainingJars) {
+    NSFileManager *fm=[NSFileManager defaultManager];
+    NSURL *documents=[gamesDirectory() URLByDeletingLastPathComponent];
+    NSURL *rmsDir=[documents URLByAppendingPathComponent:@"RMS" isDirectory:YES];
+    NSURL *rmsTabsDir=[documents URLByAppendingPathComponent:@"RMS-Tabs" isDirectory:YES];
+    if(!remainingJars.count){
+        [fm removeItemAtURL:rmsDir error:nil];
+        [fm removeItemAtURL:rmsTabsDir error:nil];
+        [fm removeItemAtURL:[documents URLByAppendingPathComponent:@"microemu.log"] error:nil];
+        return;
+    }
+    [fm removeItemAtURL:[rmsDir URLByAppendingPathComponent:@"tmp" isDirectory:YES] error:nil];
+    if(!deletedSuiteKey.length)return;
+    NSMutableSet<NSString*> *activeKeys=[NSMutableSet new];
+    for(NSURL *jar in remainingJars){
+        NSString *key=emSuiteKeyForJar(jar);
+        if(key.length)[activeKeys addObject:key];
+    }
+    if([activeKeys containsObject:deletedSuiteKey])return;
+    [fm removeItemAtURL:[rmsDir URLByAppendingPathComponent:deletedSuiteKey isDirectory:YES] error:nil];
+    NSArray<NSURL*> *tabDirs=[fm contentsOfDirectoryAtURL:rmsTabsDir includingPropertiesForKeys:nil options:NSDirectoryEnumerationSkipsHiddenFiles error:nil];
+    for(NSURL *tabDir in tabDirs){
+        [fm removeItemAtURL:[tabDir URLByAppendingPathComponent:deletedSuiteKey isDirectory:YES] error:nil];
+        NSArray<NSURL*> *rest=[fm contentsOfDirectoryAtURL:tabDir includingPropertiesForKeys:nil options:NSDirectoryEnumerationSkipsHiddenFiles error:nil];
+        BOOL hasSuite=NO;
+        for(NSURL *entry in rest){
+            if(![entry.lastPathComponent isEqualToString:@"tmp"]){hasSuite=YES;break;}
+        }
+        if(!hasSuite)[fm removeItemAtURL:tabDir error:nil];
+    }
+    NSArray<NSURL*> *remainingTabs=[fm contentsOfDirectoryAtURL:rmsTabsDir includingPropertiesForKeys:nil options:NSDirectoryEnumerationSkipsHiddenFiles error:nil];
+    if(!remainingTabs.count)[fm removeItemAtURL:rmsTabsDir error:nil];
 }
 
 @interface GameScreen : UIImageView
@@ -882,6 +933,7 @@ static UIImage *emIconFromJar(NSURL *jarURL, NSString **outSuiteName) {
 - (void)tableView:(UITableView*)tableView commitEditingStyle:(UITableViewCellEditingStyle)editingStyle forRowAtIndexPath:(NSIndexPath*)indexPath {
     if(editingStyle!=UITableViewCellEditingStyleDelete || self.onPickJar || indexPath.row>=(NSInteger)self.games.count)return;
     NSURL *target=self.games[indexPath.row];
+    NSString *deletedSuiteKey=emSuiteKeyForJar(target);
     NSError *error=nil;
     if(![[NSFileManager defaultManager] removeItemAtURL:target error:&error]){
         UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"Delete failed" message:error.localizedDescription preferredStyle:UIAlertControllerStyleAlert];
@@ -893,6 +945,7 @@ static UIImage *emIconFromJar(NSURL *jarURL, NSString **outSuiteName) {
     [self.icons removeObjectForKey:key];
     [self.subtitles removeObjectForKey:key];
     self.games=listGameJars();
+    emRemoveGameData(deletedSuiteKey,self.games);
     [tableView deleteRowsAtIndexPaths:@[indexPath] withRowAnimation:UITableViewRowAnimationAutomatic];
     [tableView reloadSections:[NSIndexSet indexSetWithIndex:0] withRowAnimation:UITableViewRowAnimationNone];
 }
