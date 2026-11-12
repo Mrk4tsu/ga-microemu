@@ -1,6 +1,7 @@
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
 #import <CommonCrypto/CommonDigest.h>
+#import <mach/mach.h>
 #import "AppPlatform.h"
 #include "emulator.h"
 #include <math.h>
@@ -40,6 +41,34 @@ static NSString *rmsPathForSlot(int slot) {
     NSURL *dir=slot<=1?[documents URLByAppendingPathComponent:@"RMS" isDirectory:YES]:[[documents URLByAppendingPathComponent:@"RMS-Tabs" isDirectory:YES] URLByAppendingPathComponent:[NSString stringWithFormat:@"tab-%d",slot] isDirectory:YES];
     [[NSFileManager defaultManager] createDirectoryAtURL:dir withIntermediateDirectories:YES attributes:nil error:nil];
     return dir.path;
+}
+static uint64_t emAppResidentMemory(void) {
+    task_vm_info_data_t vmInfo;
+    mach_msg_type_number_t count=TASK_VM_INFO_COUNT;
+    kern_return_t kr=task_info(mach_task_self(),TASK_VM_INFO,(task_info_t)&vmInfo,&count);
+    if(kr==KERN_SUCCESS && vmInfo.phys_footprint>0)return (uint64_t)vmInfo.phys_footprint;
+    struct task_basic_info basic;
+    count=TASK_BASIC_INFO_COUNT;
+    kr=task_info(mach_task_self(),TASK_BASIC_INFO,(task_info_t)&basic,&count);
+    if(kr==KERN_SUCCESS)return (uint64_t)basic.resident_size;
+    return 0;
+}
+static float emCurrentCpuUsage(void) {
+    thread_array_t thread_list;
+    mach_msg_type_number_t thread_count=0;
+    if(task_threads(mach_task_self(),&thread_list,&thread_count)!=KERN_SUCCESS)return -1.0f;
+    float tot_cpu=0.0f;
+    for(mach_msg_type_number_t i=0;i<thread_count;i++){
+        thread_basic_info_data_t thinfo;
+        mach_msg_type_number_t thread_info_count=THREAD_BASIC_INFO_COUNT;
+        if(thread_info(thread_list[i],THREAD_BASIC_INFO,(thread_info_t)&thinfo,&thread_info_count)==KERN_SUCCESS){
+            if(!(thinfo.flags & TH_FLAGS_IDLE)){
+                tot_cpu+=thinfo.cpu_usage/(float)TH_USAGE_SCALE*100.0f;
+            }
+        }
+    }
+    vm_deallocate(mach_task_self(),(vm_offset_t)thread_list,thread_count*sizeof(thread_t));
+    return tot_cpu;
 }
 static UIColor *emSecondaryLabelColor(void) {
     if(@available(iOS 13.0,*))return UIColor.secondaryLabelColor;
@@ -289,6 +318,8 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
 @property(nonatomic,strong) UIBarButtonItem *addTabItem;
 @property(nonatomic,strong) UIButton *tabSelector;
 @property(nonatomic,strong) NSLayoutConstraint *inputBarBottomConstraint;
+@property(nonatomic,strong) UILabel *metricsLabel;
+@property(nonatomic,strong) NSTimer *metricsTimer;
 @end
 
 @implementation GameController
@@ -316,17 +347,34 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
     self.screen.contentMode=UIViewContentModeScaleAspectFit;self.screen.userInteractionEnabled=YES;self.screen.multipleTouchEnabled=YES;self.screen.layer.magnificationFilter=kCAFilterNearest;
     self.statusRow=[UIView new];
     self.status=[UILabel new];self.status.text=@"Opening game…";self.status.textColor=emSecondaryLabelColor();self.status.font=[UIFont systemFontOfSize:12];self.status.numberOfLines=1;
+    self.status.lineBreakMode=NSLineBreakByTruncatingTail;
+    [self.status setContentCompressionResistancePriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisHorizontal];
+    self.metricsLabel=[UILabel new];
+    self.metricsLabel.font=[UIFont monospacedDigitSystemFontOfSize:11 weight:UIFontWeightMedium];
+    self.metricsLabel.textColor=emSecondaryLabelColor();
+    self.metricsLabel.textAlignment=NSTextAlignmentCenter;
+    self.metricsLabel.adjustsFontSizeToFitWidth=YES;
+    self.metricsLabel.minimumScaleFactor=0.8;
+    self.metricsLabel.numberOfLines=1;
+    [self.metricsLabel setContentCompressionResistancePriority:UILayoutPriorityDefaultHigh forAxis:UILayoutConstraintAxisHorizontal];
     self.padToggle=[UIButton buttonWithType:UIButtonTypeSystem];[self.padToggle setTitle:@"Hide Pad" forState:UIControlStateNormal];
     self.padToggle.titleLabel.font=[UIFont systemFontOfSize:12 weight:UIFontWeightMedium];[self.padToggle addTarget:self action:@selector(togglePad) forControlEvents:UIControlEventTouchUpInside];
-    for(UIView*v in @[self.status,self.padToggle]){v.translatesAutoresizingMaskIntoConstraints=NO;[self.statusRow addSubview:v];}
+    [self.padToggle setContentCompressionResistancePriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
+    for(UIView*v in @[self.status,self.metricsLabel,self.padToggle]){v.translatesAutoresizingMaskIntoConstraints=NO;[self.statusRow addSubview:v];}
+    NSLayoutConstraint *metricsCenterX=[self.metricsLabel.centerXAnchor constraintEqualToAnchor:self.statusRow.centerXAnchor];
+    metricsCenterX.priority=UILayoutPriorityDefaultHigh;
     [NSLayoutConstraint activateConstraints:@[
         [self.status.leadingAnchor constraintEqualToAnchor:self.statusRow.leadingAnchor constant:12],
         [self.status.centerYAnchor constraintEqualToAnchor:self.statusRow.centerYAnchor],
-        [self.status.trailingAnchor constraintLessThanOrEqualToAnchor:self.padToggle.leadingAnchor constant:-8],
+        [self.status.trailingAnchor constraintLessThanOrEqualToAnchor:self.metricsLabel.leadingAnchor constant:-6],
+        metricsCenterX,
+        [self.metricsLabel.centerYAnchor constraintEqualToAnchor:self.statusRow.centerYAnchor],
+        [self.metricsLabel.leadingAnchor constraintGreaterThanOrEqualToAnchor:self.status.trailingAnchor constant:6],
+        [self.metricsLabel.trailingAnchor constraintLessThanOrEqualToAnchor:self.padToggle.leadingAnchor constant:-6],
         [self.padToggle.trailingAnchor constraintEqualToAnchor:self.statusRow.trailingAnchor constant:-12],
         [self.padToggle.centerYAnchor constraintEqualToAnchor:self.statusRow.centerYAnchor],
+        [self.padToggle.leadingAnchor constraintGreaterThanOrEqualToAnchor:self.metricsLabel.trailingAnchor constant:6],
         [self.statusRow.heightAnchor constraintEqualToConstant:26]]];
-    [self.padToggle setContentCompressionResistancePriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
     self.numpadGrid=[self gridWithRows:@[
         @[[self key:@"1" codes:@[@('1')] accent:NO],[self key:@"2" codes:@[@('2')] accent:NO],[self key:@"3" codes:@[@('3')] accent:NO]],
         @[[self key:@"4" codes:@[@('4')] accent:NO],[self key:@"5" codes:@[@('5')] accent:NO],[self key:@"6" codes:@[@('6')] accent:NO]],
@@ -401,6 +449,11 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
     [nc addObserver:self selector:@selector(appWillEnterForeground) name:UIApplicationWillEnterForegroundNotification object:nil];
     self.displayLink=[CADisplayLink displayLinkWithTarget:self selector:@selector(frame)];self.displayLink.preferredFramesPerSecond=30;[self.displayLink addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
     self.navigationController.interactivePopGestureRecognizer.enabled=NO;[UIApplication sharedApplication].idleTimerDisabled=YES;
+    __weak GameController *weakSelf=self;
+    self.metricsTimer=[NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer*t){
+        [weakSelf updateMetrics];
+    }];
+    [self updateMetrics];
     EmClearAllFrames();em_reset_events();runtimeActive=YES;
 }
 - (void)viewDidAppear:(BOOL)animated {
@@ -424,6 +477,31 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
         BOOL used=NO;
         for(GameTab *tab in self.tabs)if(tab.rmsSlot==slot){used=YES;break;}
         if(!used)return slot;
+    }
+}
+- (void)updateMetrics {
+    uint64_t appMem=emAppResidentMemory();
+    uint64_t totalMem=[NSProcessInfo processInfo].physicalMemory;
+    float cpu=emCurrentCpuUsage();
+    double appMB=(double)appMem/(1024.0*1024.0);
+    double totalGB=(double)totalMem/(1024.0*1024.0*1024.0);
+    double ratio=totalMem>0?((double)appMem/(double)totalMem):0.0;
+    if(totalGB>0){
+        if(cpu>=0){
+            self.metricsLabel.text=[NSString stringWithFormat:@"RAM: %.0fMB/%.1fGB · CPU: %.0f%%",appMB,totalGB,cpu];
+        }else{
+            self.metricsLabel.text=[NSString stringWithFormat:@"RAM: %.0fMB/%.1fGB",appMB,totalGB];
+        }
+    }else{
+        self.metricsLabel.text=[NSString stringWithFormat:@"RAM: %.0fMB",appMB];
+    }
+    BOOL isLowRam=(totalMem>0 && totalMem<=1536ULL*1024ULL*1024ULL);
+    if((isLowRam && appMB>=320.0) || ratio>=0.40){
+        self.metricsLabel.textColor=[UIColor colorWithRed:1.0 green:0.35 blue:0.35 alpha:1];
+    }else if((isLowRam && appMB>=200.0) || ratio>=0.25){
+        self.metricsLabel.textColor=[UIColor colorWithRed:1.0 green:0.80 blue:0.0 alpha:1];
+    }else{
+        self.metricsLabel.textColor=emSecondaryLabelColor();
     }
 }
 - (void)updateTabSelector {
@@ -861,6 +939,7 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
 }
 - (void)appWillEnterForeground {
     for(GameTab *tab in self.tabs)if(!tab.finished)em_tab_event(tab.tabId,9,0,0,0,NULL);
+    [self updateMetrics];
 }
 - (void)stop {
     GameTab *tab=[self activeTab];
@@ -875,6 +954,7 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
     em_host_close_tab(tab.tabId);
 }
 - (void)close {
+    [self.metricsTimer invalidate];self.metricsTimer=nil;
     [self.displayLink invalidate];self.displayLink=nil;
     [UIApplication sharedApplication].idleTimerDisabled=NO;
     self.navigationController.interactivePopGestureRecognizer.enabled=YES;
@@ -882,6 +962,7 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
 }
 - (void)dealloc {
     [[NSNotificationCenter defaultCenter] removeObserver:self];
+    [self.metricsTimer invalidate];
     [self.displayLink invalidate];
     for(GamePadButton *button in self.padButtons)[button.repeatTimer invalidate];
 }
