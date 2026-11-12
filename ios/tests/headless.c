@@ -10,9 +10,9 @@
 #include "stb_truetype.h"
 
 static const char *frame_path;
-static double started, stop_after = 20, last_frame;
+static double started, stop_after = 20, last_frame, multi_sleep_at;
 static int frames, stopped;
-static int multi_tab, tab_frames[8], tab_finished[8];
+static int multi_tab, multi_stage, tab_frames[8], tab_finished[8];
 static mtx_t host_lock;
 static once_flag host_lock_once = ONCE_FLAG_INIT;
 static void init_host_lock(void) { mtx_init(&host_lock, mtx_plain); }
@@ -125,6 +125,27 @@ void em_platform_tick(void) {
         Scheduled *e = &schedule[next_event++];
         em_event(e->type, e->a, e->b, 0, NULL);
     }
+    if (multi_tab) {
+        int action = 0;
+        call_once(&host_lock_once, init_host_lock);
+        mtx_lock(&host_lock);
+        if (multi_stage == 0 && tab_frames[1] > 0 && tab_frames[2] > 0) {
+            multi_stage = 1;
+            multi_sleep_at = elapsed;
+            action = 1;
+        } else if (multi_stage == 1 && elapsed - multi_sleep_at >= 50) {
+            multi_stage = 2;
+            action = 2;
+        }
+        mtx_unlock(&host_lock);
+        if (action == 1) {
+            em_host_sleep_tab(1, 1);
+        } else if (action == 2) {
+            em_host_sleep_tab(1, 0);
+            em_tab_event(1, 12, 0, 0, 0, "Test42");
+            em_tab_event(2, 12, 0, 0, 0, "Test42");
+        }
+    }
     if (!stopped && elapsed >= stop_after * 1000) {
         stopped = 1;
         if (multi_tab) em_host_shutdown();
@@ -163,10 +184,6 @@ int main(int argc, char **argv) {
         snprintf(rms2, sizeof(rms2), "%s/tab2", argv[4]);
         em_host_open_tab(1, argv[3], rms1, 390, 460);
         em_host_open_tab(2, argv[3], rms2, 390, 460);
-        em_host_sleep_tab(1, 1);
-        em_tab_event(1, 12, 0, 0, 0, "Test42");
-        em_tab_event(2, 12, 0, 0, 0, "Test42");
-        em_host_sleep_tab(1, 0);
         int result = em_host_run(argv[1], argv[2]);
         printf("[MULTI_TAB] result=%d tab1_frames=%d tab2_frames=%d tab1_done=%d tab2_done=%d\n",
                result, tab_frames[1], tab_frames[2], tab_finished[1], tab_finished[2]);
