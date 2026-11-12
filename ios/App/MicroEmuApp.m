@@ -110,6 +110,11 @@ static NSString *rmsPathForSlot(int slot) {
 @implementation GameTab
 @end
 
+@interface LibraryController : UITableViewController <UIDocumentPickerDelegate>
+@property(nonatomic,strong) NSArray<NSURL*> *games;
+@property(nonatomic,copy) void (^onPickJar)(NSURL *jar);
+@end
+
 @interface GameController : UIViewController <UITextFieldDelegate>
 @property(nonatomic,strong) NSURL *jar;
 @property(nonatomic,strong) GameScreen *screen;
@@ -275,7 +280,7 @@ static NSString *rmsPathForSlot(int slot) {
     NSMutableArray<UIAction*> *actions=[NSMutableArray new];
     __weak GameController *weakSelf=self;
     for(GameTab *tab in self.tabs){
-        NSString *suffix=tab.tabId==self.activeTabId?@"":(tab.finished?@" · Stopped":@" · Sleep");
+        NSString *suffix=tab.finished?@" · Stopped":@"";
         NSString *label=[NSString stringWithFormat:@"Tab %d · %@%@",tab.tabId,tab.jar.lastPathComponent,suffix];
         int targetId=tab.tabId;
         UIAction *action=[UIAction actionWithTitle:label image:nil identifier:nil handler:^(UIAction*a){
@@ -284,7 +289,7 @@ static NSString *rmsPathForSlot(int slot) {
         action.state=tab.tabId==self.activeTabId?UIMenuElementStateOn:UIMenuElementStateOff;
         [actions addObject:action];
     }
-    self.tabSelector.menu=[UIMenu menuWithTitle:@"Tabs" children:actions];
+    self.tabSelector.menu=[UIMenu menuWithTitle:@"" image:nil identifier:nil options:UIMenuOptionsSingleSelection children:actions];
 }
 - (void)startRuntimeIfReady {
     if(self.hostStarted || self.closingHost || !self.view.window)return;
@@ -391,17 +396,29 @@ static NSString *rmsPathForSlot(int slot) {
     if(!next.finished)em_host_sleep_tab(next.tabId,0);
     [self updateTabSelector];
 }
+- (void)presentJarListPicker {
+    if(self.closingHost || self.hostFinished || self.presentedViewController)return;
+    LibraryController *picker=[[LibraryController alloc] initWithStyle:UITableViewStyleInsetGrouped];
+    __weak GameController *weakSelf=self;
+    picker.onPickJar=^(NSURL *jar){
+        [weakSelf openNewTabWithJar:jar];
+    };
+    UINavigationController *nav=[[UINavigationController alloc] initWithRootViewController:picker];
+    [self presentViewController:nav animated:YES completion:nil];
+}
 - (void)newTab {
     if(self.closingHost || self.hostFinished || self.presentedViewController)return;
-    NSArray<NSURL*> *jars=listGameJars();
-    if(!jars.count)return;
-    UIAlertController *sheet=[UIAlertController alertControllerWithTitle:@"New tab" message:@"Chọn game để mở ở tab mới (tab hiện tại sẽ chạy nền chế độ sleep)" preferredStyle:UIAlertControllerStyleActionSheet];
+    NSURL *currentJar=[self activeTab].jar?:self.jar;
+    UIAlertController *sheet=[UIAlertController alertControllerWithTitle:@"New tab" message:@"Chọn game để mở ở tab mới" preferredStyle:UIAlertControllerStyleActionSheet];
     __weak GameController *weakSelf=self;
-    for(NSURL *jar in jars){
-        [sheet addAction:[UIAlertAction actionWithTitle:jar.lastPathComponent style:UIAlertActionStyleDefault handler:^(UIAlertAction*a){
-            [weakSelf openNewTabWithJar:jar];
+    if(currentJar){
+        [sheet addAction:[UIAlertAction actionWithTitle:currentJar.lastPathComponent style:UIAlertActionStyleDefault handler:^(UIAlertAction*a){
+            [weakSelf openNewTabWithJar:currentJar];
         }]];
     }
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Chọn danh sách" style:UIAlertActionStyleDefault handler:^(UIAlertAction*a){
+        [weakSelf presentJarListPicker];
+    }]];
     [sheet addAction:[UIAlertAction actionWithTitle:@"Huỷ" style:UIAlertActionStyleCancel handler:nil]];
     sheet.popoverPresentationController.barButtonItem=self.addTabItem;
     [self presentViewController:sheet animated:YES completion:nil];
@@ -682,22 +699,32 @@ static NSString *rmsPathForSlot(int slot) {
 }
 @end
 
-@interface LibraryController : UITableViewController <UIDocumentPickerDelegate>
-@property(nonatomic,strong) NSArray<NSURL*> *games;
-@end
 @implementation LibraryController
 - (void)viewDidLoad {
-    [super viewDidLoad];self.title=@"GaEmulator";self.navigationItem.largeTitleDisplayMode=UINavigationItemLargeTitleDisplayModeAlways;
+    [super viewDidLoad];self.title=self.onPickJar?@"Chọn danh sách":@"GaEmulator";self.navigationItem.largeTitleDisplayMode=self.onPickJar?UINavigationItemLargeTitleDisplayModeNever:UINavigationItemLargeTitleDisplayModeAlways;
+    if(self.onPickJar)self.navigationItem.leftBarButtonItem=[[UIBarButtonItem alloc] initWithTitle:@"Huỷ" style:UIBarButtonItemStylePlain target:self action:@selector(cancelPicker)];
     self.navigationItem.rightBarButtonItem=[[UIBarButtonItem alloc] initWithTitle:@"Import JAR" style:UIBarButtonItemStylePlain target:self action:@selector(importJar)];
     self.tableView.backgroundColor=UIColor.systemGroupedBackgroundColor;
 }
+- (void)cancelPicker {[self dismissViewControllerAnimated:YES completion:nil];}
 - (void)viewWillAppear:(BOOL)animated {[super viewWillAppear:animated];self.games=listGameJars();[self.tableView reloadData];}
 - (NSInteger)tableView:(UITableView*)tableView numberOfRowsInSection:(NSInteger)section {return self.games.count;}
 - (UITableViewCell*)tableView:(UITableView*)tableView cellForRowAtIndexPath:(NSIndexPath*)index {
-    UITableViewCell *cell=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];cell.textLabel.text=self.games[index.row].lastPathComponent;cell.detailTextLabel.text=@"Java ME · Full Screen";cell.imageView.image=[UIImage systemImageNamed:@"gamecontroller.fill"];cell.accessoryType=UITableViewCellAccessoryDisclosureIndicator;return cell;
+    UITableViewCell *cell=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];cell.textLabel.text=self.games[index.row].lastPathComponent;cell.detailTextLabel.text=self.onPickJar?@"Mở ở tab mới":@"Java ME · Full Screen";cell.imageView.image=[UIImage systemImageNamed:@"gamecontroller.fill"];cell.accessoryType=UITableViewCellAccessoryDisclosureIndicator;return cell;
 }
-- (NSString*)tableView:(UITableView*)tableView titleForFooterInSection:(NSInteger)section {return self.games.count?@"Tap a game to run it. Touch the game screen or use the buttons below it.":@"Import a MIDP JAR from Files to get started. Games run locally on your iPhone.";}
-- (void)tableView:(UITableView*)tableView didSelectRowAtIndexPath:(NSIndexPath*)index {if(runtimeActive)return;GameController *game=[GameController new];game.jar=self.games[index.row];[self.navigationController pushViewController:game animated:YES];}
+- (NSString*)tableView:(UITableView*)tableView titleForFooterInSection:(NSInteger)section {
+    if(self.onPickJar)return self.games.count?@"Chọn game để mở trong tab mới.":@"Chưa có file JAR nào. Nhấn Import JAR để thêm.";
+    return self.games.count?@"Tap a game to run it. Touch the game screen or use the buttons below it.":@"Import a MIDP JAR from Files to get started. Games run locally on your iPhone.";
+}
+- (void)tableView:(UITableView*)tableView didSelectRowAtIndexPath:(NSIndexPath*)index {
+    if(self.onPickJar){
+        NSURL *selected=self.games[index.row];
+        void (^handler)(NSURL*)=self.onPickJar;
+        [self dismissViewControllerAnimated:YES completion:^{if(handler)handler(selected);}];
+        return;
+    }
+    if(runtimeActive)return;GameController *game=[GameController new];game.jar=self.games[index.row];[self.navigationController pushViewController:game animated:YES];
+}
 - (void)importJar {UTType *jar=[UTType typeWithFilenameExtension:@"jar"]?:UTTypeData;UIDocumentPickerViewController *picker=[[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[jar,UTTypeData] asCopy:YES];picker.delegate=self;picker.allowsMultipleSelection=YES;[self presentViewController:picker animated:YES completion:nil];}
 - (void)documentPicker:(UIDocumentPickerViewController*)controller didPickDocumentsAtURLs:(NSArray<NSURL*>*)urls {
     for(NSURL *url in urls){if(![url.pathExtension.lowercaseString isEqualToString:@"jar"])continue;BOOL scoped=[url startAccessingSecurityScopedResource];
