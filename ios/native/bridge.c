@@ -3,9 +3,13 @@
 #include "jvm_util.h"
 #include "garbage.h"
 #include "jit.h"
+#include "miniz.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef __APPLE__
+#include <sys/sysctl.h>
+#endif
 #define STBI_ONLY_PNG
 #define STBI_ONLY_JPEG
 #define STBI_ONLY_BMP
@@ -352,13 +356,58 @@ static java_native_method methods[] = {
     METHOD("browse","(Ljava/lang/String;)V",browse),METHOD("vibrate","(I)V",vibrate)
 };
 
+static void configure_jvm_memory(MiniJVM *jvm) {
+    int64_t heap_mb = 256;
+    int64_t vm_mb = 768;
+#ifdef __APPLE__
+    uint64_t mem = 0;
+    size_t len = sizeof(mem);
+    if (sysctlbyname("hw.memsize", &mem, &len, NULL, 0) == 0 && mem > 0) {
+        uint64_t ram_mb = mem / (1024ULL * 1024ULL);
+        if (ram_mb <= 1536) {
+            heap_mb = 96;
+            vm_mb = 256;
+        } else if (ram_mb <= 2560) {
+            heap_mb = 160;
+            vm_mb = 384;
+        }
+    }
+#endif
+    jvm->max_heap_size = heap_mb * 1024LL * 1024LL;
+    jvm->max_vm_memory = vm_mb * 1024LL * 1024LL;
+}
+
+int em_jar_read_entry(const char *jar_path, const char *entry_name, void **out_data, size_t *out_size) {
+    if (out_data) *out_data = NULL;
+    if (out_size) *out_size = 0;
+    if (!jar_path || !entry_name || !out_data || !out_size) return 0;
+    while (*entry_name == '/') entry_name++;
+    if (!*entry_name) return 0;
+    mz_zip_archive zip;
+    memset(&zip, 0, sizeof(zip));
+    if (!mz_zip_reader_init_file(&zip, jar_path, 0)) return 0;
+    size_t size = 0;
+    void *data = mz_zip_reader_extract_file_to_heap(&zip, entry_name, &size, MZ_ZIP_FLAG_CASE_SENSITIVE);
+    if (!data) data = mz_zip_reader_extract_file_to_heap(&zip, entry_name, &size, 0);
+    mz_zip_reader_end(&zip);
+    if (!data) return 0;
+    *out_data = data;
+    *out_size = size;
+    return 1;
+}
+
+void em_jar_free(void *data) {
+    if (data) mz_free(data);
+}
+
 static int run_jvm_entry(const char *boot, const char *classpath, const char *entry, ArrayList *args) {
     fprintf(stderr, "[RUNTIME] Initializing interpreter (%s)\n", entry); fflush(stderr);
     call_once(&initialized, initialize);
     execution_failed = 0;
     MiniJVM *jvm = jvm_create();
     if (!jvm) { em_platform_status(0, "Cannot create JVM"); return -1; }
-    jvm->max_heap_size = 256LL * 1024 * 1024; jvm->max_vm_memory = 768LL * 1024 * 1024; jvm->jdwp_enable = 0;
+    configure_jvm_memory(jvm);
+    jvm->jdwp_enable = 0;
     if (jvm_init(jvm, (char *)boot, (char *)classpath)) { em_platform_status(0, "Cannot initialize Java runtime"); return -1; }
     native_reg_lib(jvm, methods, sizeof(methods) / sizeof(methods[0]));
     int result = call_main(jvm, (char *)entry, args);

@@ -175,6 +175,16 @@ int main(int argc, char **argv) {
         }
     }
     setvbuf(stdout, NULL, _IONBF, 0);
+    {
+        void *mf = NULL;
+        size_t mf_size = 0;
+        if (!em_jar_read_entry(argv[3], "/META-INF/MANIFEST.MF", &mf, &mf_size) || !mf || mf_size == 0) {
+            fprintf(stderr, "Failed to read manifest from JAR\n");
+            free(font_data);
+            return 4;
+        }
+        em_jar_free(mf);
+    }
     if (getenv("MICROEMU_MULTI_TAB")) {
         multi_tab = 1;
         started = seconds();

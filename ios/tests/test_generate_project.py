@@ -50,7 +50,11 @@ class GenerateProjectTests(unittest.TestCase):
                 gen.generate(runtime, spec_only=False)
 
             spec = json.loads((ios / "build/project.json").read_text(encoding="utf-8"))
+            self.assertEqual(spec["options"]["deploymentTarget"]["iOS"], "12.0")
+            self.assertEqual(spec["settings"]["base"]["IPHONEOS_DEPLOYMENT_TARGET"], "12.0")
             self.assertEqual(spec["settings"]["base"]["ASSETCATALOG_COMPILER_APPICON_NAME"], "AppIcon")
+            deps = [d["sdk"] for d in spec["targets"]["MicroEmu"]["dependencies"]]
+            self.assertNotIn("UniformTypeIdentifiers.framework", deps)
             sources = spec["targets"]["MicroEmu"]["sources"]
             self.assertIn({"path": "App/Assets.xcassets"}, sources)
             self.assertIn({"path": "Runtime", "buildPhase": "resources", "type": "folder"}, sources)

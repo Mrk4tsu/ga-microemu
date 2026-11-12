@@ -1,5 +1,4 @@
 #import <UIKit/UIKit.h>
-#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <QuartzCore/QuartzCore.h>
 #import "AppPlatform.h"
 #include "emulator.h"
@@ -40,6 +39,99 @@ static NSString *rmsPathForSlot(int slot) {
     NSURL *dir=slot<=1?[documents URLByAppendingPathComponent:@"RMS" isDirectory:YES]:[[documents URLByAppendingPathComponent:@"RMS-Tabs" isDirectory:YES] URLByAppendingPathComponent:[NSString stringWithFormat:@"tab-%d",slot] isDirectory:YES];
     [[NSFileManager defaultManager] createDirectoryAtURL:dir withIntermediateDirectories:YES attributes:nil error:nil];
     return dir.path;
+}
+static UIColor *emSecondaryLabelColor(void) {
+    if(@available(iOS 13.0,*))return UIColor.secondaryLabelColor;
+    return [UIColor colorWithWhite:0.65 alpha:1];
+}
+static UIColor *emGroupedBgColor(void) {
+    if(@available(iOS 13.0,*))return UIColor.systemGroupedBackgroundColor;
+    return [UIColor colorWithWhite:0.08 alpha:1];
+}
+static UITableViewStyle emTableStyle(void) {
+    if(@available(iOS 13.0,*))return UITableViewStyleInsetGrouped;
+    return UITableViewStyleGrouped;
+}
+static NSData *emReadJarEntry(NSURL *jarURL, NSString *entryName) {
+    if(!jarURL.path.length || !entryName.length)return nil;
+    void *bytes=NULL;size_t size=0;
+    if(!em_jar_read_entry(jarURL.path.fileSystemRepresentation,entryName.UTF8String,&bytes,&size))return nil;
+    NSData *data=[NSData dataWithBytes:bytes length:size];
+    em_jar_free(bytes);
+    return data;
+}
+static NSDictionary<NSString*,NSString*> *emParseManifest(NSURL *jarURL) {
+    NSData *raw=emReadJarEntry(jarURL,@"META-INF/MANIFEST.MF");
+    if(!raw)return @{};
+    NSString *text=[[NSString alloc] initWithData:raw encoding:NSUTF8StringEncoding]?:[[NSString alloc] initWithData:raw encoding:NSISOLatin1StringEncoding];
+    if(!text)return @{};
+    NSMutableDictionary<NSString*,NSString*> *headers=[NSMutableDictionary new];
+    NSString *currentKey=nil;NSMutableString *currentVal=nil;
+    for(NSString *line in [text componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]){
+        if(!line.length)continue;
+        if([line hasPrefix:@" "] && currentKey){[currentVal appendString:[line substringFromIndex:1]];continue;}
+        if(currentKey)headers[currentKey]=[currentVal copy];
+        NSRange colon=[line rangeOfString:@":"];
+        if(colon.location!=NSNotFound && colon.location>0){
+            currentKey=[line substringToIndex:colon.location];
+            currentVal=[[[line substringFromIndex:colon.location+1] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet] mutableCopy];
+        } else {currentKey=nil;currentVal=nil;}
+    }
+    if(currentKey)headers[currentKey]=[currentVal copy];
+    return headers;
+}
+static UIImage *emRenderSquareIcon(UIImage *source) {
+    if(!source)return nil;
+    CGSize target=CGSizeMake(40,40);
+    UIGraphicsBeginImageContextWithOptions(target,NO,0);
+    CGContextRef ctx=UIGraphicsGetCurrentContext();
+    UIBezierPath *clip=[UIBezierPath bezierPathWithRoundedRect:CGRectMake(0,0,40,40) cornerRadius:8];
+    [clip addClip];
+    [[UIColor colorWithWhite:0.16 alpha:1] setFill];
+    UIRectFill(CGRectMake(0,0,40,40));
+    CGContextSetInterpolationQuality(ctx,source.size.width<=40?kCGInterpolationNone:kCGInterpolationHigh);
+    CGFloat scale=MIN(36.0/MAX(1.0,source.size.width),36.0/MAX(1.0,source.size.height));
+    CGFloat w=source.size.width*scale,h=source.size.height*scale;
+    [source drawInRect:CGRectMake((40.0-w)/2.0,(40.0-h)/2.0,w,h)];
+    UIImage *result=UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return result;
+}
+static UIImage *emFallbackJarIcon(void) {
+    if(@available(iOS 13.0,*))return [UIImage systemImageNamed:@"gamecontroller.fill"];
+    CGSize target=CGSizeMake(40,40);
+    UIGraphicsBeginImageContextWithOptions(target,NO,0);
+    [[UIBezierPath bezierPathWithRoundedRect:CGRectMake(0,0,40,40) cornerRadius:8] addClip];
+    [[UIColor colorWithWhite:0.2 alpha:1] setFill];
+    UIRectFill(CGRectMake(0,0,40,40));
+    NSDictionary *attrs=@{NSFontAttributeName:[UIFont boldSystemFontOfSize:13],NSForegroundColorAttributeName:[UIColor colorWithWhite:0.85 alpha:1]};
+    CGSize textSize=[@"JAR" sizeWithAttributes:attrs];
+    [@"JAR" drawAtPoint:CGPointMake((40.0-textSize.width)/2.0,(40.0-textSize.height)/2.0) withAttributes:attrs];
+    UIImage *result=UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return result;
+}
+static UIImage *emIconFromJar(NSURL *jarURL, NSString **outSuiteName) {
+    NSDictionary<NSString*,NSString*> *manifest=emParseManifest(jarURL);
+    if(outSuiteName)*outSuiteName=manifest[@"MIDlet-Name"]?:@"";
+    NSMutableArray<NSString*> *candidates=[NSMutableArray new];
+    NSString *m1=manifest[@"MIDlet-1"];
+    if(m1.length){
+        NSArray<NSString*> *parts=[m1 componentsSeparatedByString:@","];
+        if(parts.count>=2){
+            NSString *p=[parts[1] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+            if(p.length)[candidates addObject:p];
+        }
+    }
+    NSString *mIcon=[manifest[@"MIDlet-Icon"] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+    if(mIcon.length)[candidates addObject:mIcon];
+    [candidates addObjectsFromArray:@[@"icon.png",@"res/icon.png",@"icons/icon.png"]];
+    for(NSString *entry in candidates){
+        NSData *data=emReadJarEntry(jarURL,entry);
+        UIImage *decoded=data?[UIImage imageWithData:data]:nil;
+        if(decoded)return emRenderSquareIcon(decoded);
+    }
+    return emFallbackJarIcon();
 }
 
 @interface GameScreen : UIImageView
@@ -112,6 +204,8 @@ static NSString *rmsPathForSlot(int slot) {
 
 @interface LibraryController : UITableViewController <UIDocumentPickerDelegate>
 @property(nonatomic,strong) NSArray<NSURL*> *games;
+@property(nonatomic,strong) NSMutableDictionary<NSString*,UIImage*> *icons;
+@property(nonatomic,strong) NSMutableDictionary<NSString*,NSString*> *subtitles;
 @property(nonatomic,copy) void (^onPickJar)(NSURL *jar);
 @end
 
@@ -143,6 +237,7 @@ static NSString *rmsPathForSlot(int slot) {
 @property(nonatomic,strong) UIBarButtonItem *stopItem;
 @property(nonatomic,strong) UIBarButtonItem *addTabItem;
 @property(nonatomic,strong) UIButton *tabSelector;
+@property(nonatomic,strong) NSLayoutConstraint *inputBarBottomConstraint;
 @end
 
 @implementation GameController
@@ -155,7 +250,9 @@ static NSString *rmsPathForSlot(int slot) {
     self.addTabItem=[[UIBarButtonItem alloc] initWithTitle:@"New tab" style:UIBarButtonItemStylePlain target:self action:@selector(newTab)];
     self.navigationItem.leftBarButtonItems=@[self.stopItem,self.addTabItem];
     self.tabSelector=[UIButton buttonWithType:UIButtonTypeSystem];
-    self.tabSelector.showsMenuAsPrimaryAction=YES;self.tabSelector.tintColor=UIColor.whiteColor;
+    if(@available(iOS 14.0,*))self.tabSelector.showsMenuAsPrimaryAction=YES;
+    else [self.tabSelector addTarget:self action:@selector(showTabSheet) forControlEvents:UIControlEventTouchUpInside];
+    self.tabSelector.tintColor=UIColor.whiteColor;
     self.tabSelector.titleLabel.font=[UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
     self.tabSelector.titleLabel.lineBreakMode=NSLineBreakByTruncatingMiddle;
     [self.tabSelector setTitle:[self.jar.lastPathComponent stringByAppendingString:@" ▾"] forState:UIControlStateNormal];
@@ -167,7 +264,7 @@ static NSString *rmsPathForSlot(int slot) {
     self.screen=[GameScreen new];self.screen.virtualWidth=480;self.screen.virtualHeight=320;
     self.screen.contentMode=UIViewContentModeScaleAspectFit;self.screen.userInteractionEnabled=YES;self.screen.multipleTouchEnabled=YES;self.screen.layer.magnificationFilter=kCAFilterNearest;
     self.statusRow=[UIView new];
-    self.status=[UILabel new];self.status.text=@"Opening game…";self.status.textColor=UIColor.secondaryLabelColor;self.status.font=[UIFont systemFontOfSize:12];self.status.numberOfLines=1;
+    self.status=[UILabel new];self.status.text=@"Opening game…";self.status.textColor=emSecondaryLabelColor();self.status.font=[UIFont systemFontOfSize:12];self.status.numberOfLines=1;
     self.padToggle=[UIButton buttonWithType:UIButtonTypeSystem];[self.padToggle setTitle:@"Hide Pad" forState:UIControlStateNormal];
     self.padToggle.titleLabel.font=[UIFont systemFontOfSize:12 weight:UIFontWeightMedium];[self.padToggle addTarget:self action:@selector(togglePad) forControlEvents:UIControlEventTouchUpInside];
     for(UIView*v in @[self.status,self.padToggle]){v.translatesAutoresizingMaskIntoConstraints=NO;[self.statusRow addSubview:v];}
@@ -232,16 +329,22 @@ static NSString *rmsPathForSlot(int slot) {
         [self.statusRow.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor],
         [self.statusRow.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor],
         [self.statusRow.bottomAnchor constraintEqualToAnchor:safe.bottomAnchor constant:-4]];
+    if(@available(iOS 15.0,*)){
+        self.inputBarBottomConstraint=[self.inputBar.bottomAnchor constraintEqualToAnchor:self.view.keyboardLayoutGuide.topAnchor];
+    } else {
+        self.inputBarBottomConstraint=[self.inputBar.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor];
+    }
     [NSLayoutConstraint activateConstraints:@[
         [self.inputBar.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor],
         [self.inputBar.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor],
         [self.inputBar.heightAnchor constraintEqualToConstant:48],
-        [self.inputBar.bottomAnchor constraintEqualToAnchor:self.view.keyboardLayoutGuide.topAnchor]]];
+        self.inputBarBottomConstraint]];
     [self updatePadLayout];
     NSNotificationCenter *nc=[NSNotificationCenter defaultCenter];
     [nc addObserver:self selector:@selector(statusChanged:) name:EmStatusNotification object:nil];
     [nc addObserver:self selector:@selector(modalChanged:) name:EmModalNotification object:nil];
     [nc addObserver:self selector:@selector(tabFinished:) name:EmTabFinishedNotification object:nil];
+    if(@available(iOS 15.0,*)){}else [nc addObserver:self selector:@selector(keyboardWillChangeFrame:) name:UIKeyboardWillChangeFrameNotification object:nil];
     [nc addObserver:self selector:@selector(keyboardWillHide:) name:UIKeyboardWillHideNotification object:nil];
     [nc addObserver:self selector:@selector(appDidEnterBackground) name:UIApplicationDidEnterBackgroundNotification object:nil];
     [nc addObserver:self selector:@selector(appWillEnterForeground) name:UIApplicationWillEnterForegroundNotification object:nil];
@@ -277,19 +380,43 @@ static NSString *rmsPathForSlot(int slot) {
     NSString *title=active?[NSString stringWithFormat:@"%d · %@ ▾",active.tabId,active.jar.lastPathComponent]:[self.jar.lastPathComponent stringByAppendingString:@" ▾"];
     [self.tabSelector setTitle:title forState:UIControlStateNormal];
     [self.tabSelector sizeToFit];
-    NSMutableArray<UIAction*> *actions=[NSMutableArray new];
+    if(@available(iOS 14.0,*)){
+        NSMutableArray<UIAction*> *actions=[NSMutableArray new];
+        __weak GameController *weakSelf=self;
+        for(GameTab *tab in self.tabs){
+            NSString *suffix=tab.finished?@" · Stopped":@"";
+            NSString *label=[NSString stringWithFormat:@"Tab %d · %@%@",tab.tabId,tab.jar.lastPathComponent,suffix];
+            int targetId=tab.tabId;
+            UIAction *action=[UIAction actionWithTitle:label image:nil identifier:nil handler:^(UIAction*a){
+                [weakSelf switchToTab:targetId];
+            }];
+            action.state=tab.tabId==self.activeTabId?UIMenuElementStateOn:UIMenuElementStateOff;
+            [actions addObject:action];
+        }
+        if(@available(iOS 15.0,*)){
+            self.tabSelector.menu=[UIMenu menuWithTitle:@"" image:nil identifier:nil options:UIMenuOptionsSingleSelection children:actions];
+        }else{
+            self.tabSelector.menu=[UIMenu menuWithTitle:@"" children:actions];
+        }
+    }
+}
+- (void)showTabSheet {
+    if(self.closingHost || self.presentedViewController || !self.tabs.count)return;
+    UIAlertController *sheet=[UIAlertController alertControllerWithTitle:nil message:nil preferredStyle:UIAlertControllerStyleActionSheet];
     __weak GameController *weakSelf=self;
     for(GameTab *tab in self.tabs){
+        NSString *prefix=tab.tabId==self.activeTabId?@"✓ ":@"";
         NSString *suffix=tab.finished?@" · Stopped":@"";
-        NSString *label=[NSString stringWithFormat:@"Tab %d · %@%@",tab.tabId,tab.jar.lastPathComponent,suffix];
+        NSString *label=[NSString stringWithFormat:@"%@Tab %d · %@%@",prefix,tab.tabId,tab.jar.lastPathComponent,suffix];
         int targetId=tab.tabId;
-        UIAction *action=[UIAction actionWithTitle:label image:nil identifier:nil handler:^(UIAction*a){
+        [sheet addAction:[UIAlertAction actionWithTitle:label style:UIAlertActionStyleDefault handler:^(UIAlertAction*a){
             [weakSelf switchToTab:targetId];
-        }];
-        action.state=tab.tabId==self.activeTabId?UIMenuElementStateOn:UIMenuElementStateOff;
-        [actions addObject:action];
+        }]];
     }
-    self.tabSelector.menu=[UIMenu menuWithTitle:@"" image:nil identifier:nil options:UIMenuOptionsSingleSelection children:actions];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Huỷ" style:UIAlertActionStyleCancel handler:nil]];
+    sheet.popoverPresentationController.sourceView=self.tabSelector;
+    sheet.popoverPresentationController.sourceRect=self.tabSelector.bounds;
+    [self presentViewController:sheet animated:YES completion:nil];
 }
 - (void)startRuntimeIfReady {
     if(self.hostStarted || self.closingHost || !self.view.window)return;
@@ -398,12 +525,13 @@ static NSString *rmsPathForSlot(int slot) {
 }
 - (void)presentJarListPicker {
     if(self.closingHost || self.hostFinished || self.presentedViewController)return;
-    LibraryController *picker=[[LibraryController alloc] initWithStyle:UITableViewStyleInsetGrouped];
+    LibraryController *picker=[[LibraryController alloc] initWithStyle:emTableStyle()];
     __weak GameController *weakSelf=self;
     picker.onPickJar=^(NSURL *jar){
         [weakSelf openNewTabWithJar:jar];
     };
     UINavigationController *nav=[[UINavigationController alloc] initWithRootViewController:picker];
+    if(@available(iOS 13.0,*)){}else{nav.navigationBar.barStyle=UIBarStyleBlack;nav.navigationBar.tintColor=UIColor.systemBlueColor;}
     [self presentViewController:nav animated:YES completion:nil];
 }
 - (void)newTab {
@@ -488,7 +616,7 @@ static NSString *rmsPathForSlot(int slot) {
     self.keyboardField.backgroundColor=[UIColor colorWithWhite:0.18 alpha:1];self.keyboardField.textColor=UIColor.whiteColor;
     self.keyboardField.font=[UIFont systemFontOfSize:15];self.keyboardField.layer.cornerRadius=8;
     self.keyboardField.leftView=[[UIView alloc] initWithFrame:CGRectMake(0,0,10,1)];self.keyboardField.leftViewMode=UITextFieldViewModeAlways;
-    self.keyboardField.attributedPlaceholder=[[NSAttributedString alloc] initWithString:@"Nhập văn bản gửi vào game…" attributes:@{NSForegroundColorAttributeName:UIColor.secondaryLabelColor}];
+    self.keyboardField.attributedPlaceholder=[[NSAttributedString alloc] initWithString:@"Nhập văn bản gửi vào game…" attributes:@{NSForegroundColorAttributeName:emSecondaryLabelColor()}];
     self.keyboardField.autocorrectionType=UITextAutocorrectionTypeNo;self.keyboardField.autocapitalizationType=UITextAutocapitalizationTypeNone;
     self.keyboardField.spellCheckingType=UITextSpellCheckingTypeNo;self.keyboardField.returnKeyType=UIReturnKeySend;
     [self.keyboardField addTarget:self action:@selector(keyboardTextChanged) forControlEvents:UIControlEventEditingChanged];
@@ -554,8 +682,17 @@ static NSString *rmsPathForSlot(int slot) {
     }
     self.keyboardField.text=@"";self.lastSentText=@"";self.inputBar.hidden=YES;
 }
+- (void)keyboardWillChangeFrame:(NSNotification*)notification {
+    CGRect endFrame=[notification.userInfo[UIKeyboardFrameEndUserInfoKey] CGRectValue];
+    CGRect local=[self.view convertRect:endFrame fromView:nil];
+    CGFloat overlap=MAX(0,CGRectGetMaxY(self.view.bounds)-local.origin.y);
+    self.inputBarBottomConstraint.constant=-overlap;
+    NSTimeInterval duration=[notification.userInfo[UIKeyboardAnimationDurationUserInfoKey] doubleValue];
+    [UIView animateWithDuration:duration animations:^{ [self.view layoutIfNeeded]; }];
+}
 - (void)keyboardWillHide:(NSNotification*)notification {
     self.keyboardField.text=@"";self.lastSentText=@"";self.inputBar.hidden=YES;
+    if(@available(iOS 15.0,*)){}else{self.inputBarBottomConstraint.constant=0;[self.view layoutIfNeeded];}
 }
 - (void)frame {
     if(!self.activeTabId)return;
@@ -701,20 +838,67 @@ static NSString *rmsPathForSlot(int slot) {
 
 @implementation LibraryController
 - (void)viewDidLoad {
-    [super viewDidLoad];self.title=self.onPickJar?@"Chọn danh sách":@"GaEmulator";self.navigationItem.largeTitleDisplayMode=self.onPickJar?UINavigationItemLargeTitleDisplayModeNever:UINavigationItemLargeTitleDisplayModeAlways;
-    if(self.onPickJar)self.navigationItem.leftBarButtonItem=[[UIBarButtonItem alloc] initWithTitle:@"Huỷ" style:UIBarButtonItemStylePlain target:self action:@selector(cancelPicker)];
+    [super viewDidLoad];
+    self.icons=[NSMutableDictionary new];self.subtitles=[NSMutableDictionary new];
+    self.title=self.onPickJar?@"Chọn danh sách":@"GaEmulator";
+    self.navigationItem.largeTitleDisplayMode=self.onPickJar?UINavigationItemLargeTitleDisplayModeNever:UINavigationItemLargeTitleDisplayModeAlways;
+    if(self.onPickJar){
+        self.navigationItem.leftBarButtonItem=[[UIBarButtonItem alloc] initWithTitle:@"Huỷ" style:UIBarButtonItemStylePlain target:self action:@selector(cancelPicker)];
+    }else{
+        self.navigationItem.leftBarButtonItem=self.editButtonItem;
+    }
     self.navigationItem.rightBarButtonItem=[[UIBarButtonItem alloc] initWithTitle:@"Import JAR" style:UIBarButtonItemStylePlain target:self action:@selector(importJar)];
-    self.tableView.backgroundColor=UIColor.systemGroupedBackgroundColor;
+    self.tableView.backgroundColor=emGroupedBgColor();
+    self.tableView.rowHeight=58;
+    if(@available(iOS 13.0,*)){}else{self.tableView.separatorColor=[UIColor colorWithWhite:0.22 alpha:1];}
 }
 - (void)cancelPicker {[self dismissViewControllerAnimated:YES completion:nil];}
 - (void)viewWillAppear:(BOOL)animated {[super viewWillAppear:animated];self.games=listGameJars();[self.tableView reloadData];}
 - (NSInteger)tableView:(UITableView*)tableView numberOfRowsInSection:(NSInteger)section {return self.games.count;}
 - (UITableViewCell*)tableView:(UITableView*)tableView cellForRowAtIndexPath:(NSIndexPath*)index {
-    UITableViewCell *cell=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];cell.textLabel.text=self.games[index.row].lastPathComponent;cell.detailTextLabel.text=self.onPickJar?@"Mở ở tab mới":@"Java ME · Full Screen";cell.imageView.image=[UIImage systemImageNamed:@"gamecontroller.fill"];cell.accessoryType=UITableViewCellAccessoryDisclosureIndicator;return cell;
+    UITableViewCell *cell=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
+    NSURL *jar=self.games[index.row];
+    NSString *key=jar.path?:jar.lastPathComponent;
+    UIImage *icon=self.icons[key];
+    NSString *suite=self.subtitles[key];
+    if(!icon){
+        icon=emIconFromJar(jar,&suite);
+        if(icon)self.icons[key]=icon;
+        if(suite)self.subtitles[key]=suite;
+    }
+    cell.textLabel.text=jar.lastPathComponent;
+    cell.detailTextLabel.text=self.onPickJar?@"Mở ở tab mới":(suite.length?[NSString stringWithFormat:@"%@ · Java ME",suite]:@"Java ME · Full Screen");
+    cell.imageView.image=icon;
+    cell.imageView.contentMode=UIViewContentModeScaleAspectFit;
+    cell.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
+    if(@available(iOS 13.0,*)){}else{
+        cell.backgroundColor=[UIColor colorWithWhite:0.13 alpha:1];
+        cell.textLabel.textColor=UIColor.whiteColor;
+        cell.detailTextLabel.textColor=emSecondaryLabelColor();
+    }
+    return cell;
+}
+- (BOOL)tableView:(UITableView*)tableView canEditRowAtIndexPath:(NSIndexPath*)indexPath {return !self.onPickJar;}
+- (void)tableView:(UITableView*)tableView commitEditingStyle:(UITableViewCellEditingStyle)editingStyle forRowAtIndexPath:(NSIndexPath*)indexPath {
+    if(editingStyle!=UITableViewCellEditingStyleDelete || self.onPickJar || indexPath.row>=(NSInteger)self.games.count)return;
+    NSURL *target=self.games[indexPath.row];
+    NSError *error=nil;
+    if(![[NSFileManager defaultManager] removeItemAtURL:target error:&error]){
+        UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"Xoá thất bại" message:error.localizedDescription preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:alert animated:YES completion:nil];
+        return;
+    }
+    NSString *key=target.path?:target.lastPathComponent;
+    [self.icons removeObjectForKey:key];
+    [self.subtitles removeObjectForKey:key];
+    self.games=listGameJars();
+    [tableView deleteRowsAtIndexPaths:@[indexPath] withRowAnimation:UITableViewRowAnimationAutomatic];
+    [tableView reloadSections:[NSIndexSet indexSetWithIndex:0] withRowAnimation:UITableViewRowAnimationNone];
 }
 - (NSString*)tableView:(UITableView*)tableView titleForFooterInSection:(NSInteger)section {
     if(self.onPickJar)return self.games.count?@"Chọn game để mở trong tab mới.":@"Chưa có file JAR nào. Nhấn Import JAR để thêm.";
-    return self.games.count?@"Tap a game to run it. Touch the game screen or use the buttons below it.":@"Import a MIDP JAR from Files to get started. Games run locally on your iPhone.";
+    return self.games.count?@"Chạm để chạy game. Vuốt sang trái hoặc bấm Edit để xoá JAR.":@"Import a MIDP JAR from Files to get started. Games run locally on your iPhone.";
 }
 - (void)tableView:(UITableView*)tableView didSelectRowAtIndexPath:(NSIndexPath*)index {
     if(self.onPickJar){
@@ -725,11 +909,20 @@ static NSString *rmsPathForSlot(int slot) {
     }
     if(runtimeActive)return;GameController *game=[GameController new];game.jar=self.games[index.row];[self.navigationController pushViewController:game animated:YES];
 }
-- (void)importJar {UTType *jar=[UTType typeWithFilenameExtension:@"jar"]?:UTTypeData;UIDocumentPickerViewController *picker=[[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[jar,UTTypeData] asCopy:YES];picker.delegate=self;picker.allowsMultipleSelection=YES;[self presentViewController:picker animated:YES completion:nil];}
+- (void)importJar {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    UIDocumentPickerViewController *picker=[[UIDocumentPickerViewController alloc] initWithDocumentTypes:@[@"com.gamod.microemu.jar",@"public.archive",@"public.data"] inMode:UIDocumentPickerModeImport];
+#pragma clang diagnostic pop
+    picker.delegate=self;
+    if(@available(iOS 11.0,*))picker.allowsMultipleSelection=YES;
+    [self presentViewController:picker animated:YES completion:nil];
+}
 - (void)documentPicker:(UIDocumentPickerViewController*)controller didPickDocumentsAtURLs:(NSArray<NSURL*>*)urls {
     for(NSURL *url in urls){if(![url.pathExtension.lowercaseString isEqualToString:@"jar"])continue;BOOL scoped=[url startAccessingSecurityScopedResource];
         NSURL *target=[gamesDirectory() URLByAppendingPathComponent:url.lastPathComponent];if([[NSFileManager defaultManager] fileExistsAtPath:target.path])target=[gamesDirectory() URLByAppendingPathComponent:[NSString stringWithFormat:@"%@-%@.jar",url.lastPathComponent.stringByDeletingPathExtension,NSUUID.UUID.UUIDString]];
         NSError *error=nil;[[NSFileManager defaultManager] copyItemAtURL:url toURL:target error:&error];if(scoped)[url stopAccessingSecurityScopedResource];
+        NSString *key=target.path?:target.lastPathComponent;[self.icons removeObjectForKey:key];[self.subtitles removeObjectForKey:key];
         if(error){UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"Import failed" message:error.localizedDescription preferredStyle:UIAlertControllerStyleAlert];[alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];[self presentViewController:alert animated:YES completion:nil];}
     }
     [self viewWillAppear:NO];
@@ -741,7 +934,12 @@ static NSString *rmsPathForSlot(int slot) {
 @end
 @implementation AppDelegate
 - (BOOL)application:(UIApplication*)application didFinishLaunchingWithOptions:(NSDictionary*)options {
-    self.window=[[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];UINavigationController *navigation=[[UINavigationController alloc] initWithRootViewController:[[LibraryController alloc] initWithStyle:UITableViewStyleInsetGrouped]];navigation.navigationBar.prefersLargeTitles=YES;self.window.rootViewController=navigation;self.window.overrideUserInterfaceStyle=UIUserInterfaceStyleDark;[self.window makeKeyAndVisible];return YES;
+    self.window=[[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
+    UINavigationController *navigation=[[UINavigationController alloc] initWithRootViewController:[[LibraryController alloc] initWithStyle:emTableStyle()]];
+    navigation.navigationBar.prefersLargeTitles=YES;
+    if(@available(iOS 13.0,*)){self.window.overrideUserInterfaceStyle=UIUserInterfaceStyleDark;}
+    else{navigation.navigationBar.barStyle=UIBarStyleBlack;navigation.navigationBar.tintColor=UIColor.systemBlueColor;}
+    self.window.rootViewController=navigation;[self.window makeKeyAndVisible];return YES;
 }
 @end
 int main(int argc,char**argv){@autoreleasepool{return UIApplicationMain(argc,argv,nil,NSStringFromClass(AppDelegate.class));}}

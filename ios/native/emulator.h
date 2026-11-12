@@ -23,6 +23,8 @@ void em_reset_events(void);
 void em_tab_reset_events(int tab_id);
 void em_blend(EmSurface *surface, int x, int y, uint32_t argb, const int *clip);
 void em_raster(EmSurface *target, EmSurface *source, int operation, const int *args, const char *text);
+int em_jar_read_entry(const char *jar_path, const char *entry_name, void **out_data, size_t *out_size);
+void em_jar_free(void *data);
 
 /* Platform functions: UIKit/CoreText in the app; deterministic headless host in tests. */
 void em_platform_present(int tab_id, const EmSurface *surface);
