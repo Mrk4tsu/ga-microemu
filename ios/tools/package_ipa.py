@@ -28,16 +28,29 @@ def package(app, output):
     if not device:
         raise ValueError("IPA requires an iphoneos build, not a Simulator app")
     output.parent.mkdir(parents=True, exist_ok=True)
+
+    def _dir_entry(name):
+        entry = zipfile.ZipInfo(name if name.endswith("/") else name + "/")
+        entry.create_system = 3
+        entry.external_attr = ((stat.S_IFDIR | 0o755) << 16) | 0x10
+        entry.compress_type = zipfile.ZIP_STORED
+        return entry
+
     with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
-        for file in sorted(app.rglob("*")):
-            if not file.is_file():
+        archive.writestr(_dir_entry("Payload/"), b"")
+        archive.writestr(_dir_entry("Payload/" + app.name + "/"), b"")
+        for item in sorted(app.rglob("*")):
+            name = "Payload/" + app.name + "/" + item.relative_to(app).as_posix()
+            if item.is_dir():
+                archive.writestr(_dir_entry(name), b"")
                 continue
-            name = "Payload/" + app.name + "/" + file.relative_to(app).as_posix()
-            entry = zipfile.ZipInfo.from_file(file, name)
-            if file == binary:
-                entry.external_attr = (stat.S_IFREG | 0o755) << 16
+            if not item.is_file():
+                continue
+            entry = zipfile.ZipInfo.from_file(item, name)
+            entry.create_system = 3
+            entry.external_attr = (stat.S_IFREG | (0o755 if item == binary else 0o644)) << 16
             entry.compress_type = zipfile.ZIP_DEFLATED
-            archive.writestr(entry, file.read_bytes())
+            archive.writestr(entry, item.read_bytes())
     print(output)
 
 
