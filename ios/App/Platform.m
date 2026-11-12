@@ -9,19 +9,46 @@
 
 NSString * const EmStatusNotification = @"MicroEmuStatus";
 NSString * const EmModalNotification = @"MicroEmuModal";
+NSString * const EmTabFinishedNotification = @"MicroEmuTabFinished";
 static NSLock *frameLock;
-static NSData *pendingFrame;
-static int pendingWidth,pendingHeight;
-static void initializeFrames(void) {static dispatch_once_t once;dispatch_once(&once, ^{frameLock=[NSLock new];});}
-NSData *EmConsumeFrame(int *width,int *height) {
-    initializeFrames();[frameLock lock];NSData *frame=pendingFrame;pendingFrame=nil;
-    *width=pendingWidth;*height=pendingHeight;[frameLock unlock];return frame;
+static NSMutableDictionary<NSNumber*, NSDictionary*> *pendingFrames;
+static void initializeFrames(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        frameLock = [NSLock new];
+        pendingFrames = [NSMutableDictionary new];
+    });
 }
-void EmClearFrame(void) {initializeFrames();[frameLock lock];pendingFrame=nil;[frameLock unlock];}
-void em_platform_present(const EmSurface *surface) {
+NSData *EmConsumeFrame(int tabId, int *width, int *height) {
+    initializeFrames();
+    [frameLock lock];
+    NSDictionary *entry = pendingFrames[@(tabId)];
+    if (entry) [pendingFrames removeObjectForKey:@(tabId)];
+    [frameLock unlock];
+    if (!entry) return nil;
+    *width = [entry[@"w"] intValue];
+    *height = [entry[@"h"] intValue];
+    return entry[@"data"];
+}
+void EmClearFrame(int tabId) {
+    initializeFrames();
+    [frameLock lock];
+    [pendingFrames removeObjectForKey:@(tabId)];
+    [frameLock unlock];
+}
+void EmClearAllFrames(void) {
+    initializeFrames();
+    [frameLock lock];
+    [pendingFrames removeAllObjects];
+    [frameLock unlock];
+}
+void em_platform_present(int tabId, const EmSurface *surface) {
     @autoreleasepool {
-        NSData *frame=[[NSData alloc] initWithBytes:surface->pixels length:(NSUInteger)surface->width*surface->height*4];
-        initializeFrames();[frameLock lock];pendingFrame=frame;pendingWidth=surface->width;pendingHeight=surface->height;[frameLock unlock];
+        NSData *frame = [[NSData alloc] initWithBytes:surface->pixels length:(NSUInteger)surface->width * surface->height * 4];
+        initializeFrames();
+        [frameLock lock];
+        pendingFrames[@(tabId)] = @{@"data": frame, @"w": @(surface->width), @"h": @(surface->height)};
+        [frameLock unlock];
     }
 }
 static CTFontRef fontFor(int size,int style,int face) {
@@ -66,22 +93,30 @@ void em_platform_text(EmSurface *surface,const char *text,const int *args) {
         CFRelease(line);CFRelease(font);
     }
 }
-void em_platform_status(const char *text) {
+void em_platform_status(int tabId, const char *text) {
     @autoreleasepool {
         NSString *value=[[NSString alloc] initWithUTF8String:text]?:@"Runtime error";
-        fprintf(stdout,"[STATUS] %s\n",text);fflush(stdout);
-        dispatch_async(dispatch_get_main_queue(), ^{[[NSNotificationCenter defaultCenter] postNotificationName:EmStatusNotification object:value];});
+        fprintf(stdout,"[STATUS tab=%d] %s\n",tabId,text);fflush(stdout);
+        NSDictionary *info=@{@"tabId":@(tabId),@"text":value};
+        dispatch_async(dispatch_get_main_queue(), ^{[[NSNotificationCenter defaultCenter] postNotificationName:EmStatusNotification object:info];});
     }
 }
-void em_platform_modal(const char *title,const char *value,int maxSize,int constraints,const char **labels,int count) {
+void em_platform_modal(int tabId, const char *title,const char *value,int maxSize,int constraints,const char **labels,int count) {
     @autoreleasepool {
         NSString *heading=title?[[NSString alloc] initWithUTF8String:title]:nil;
         NSString *body=value?[[NSString alloc] initWithUTF8String:value]:@"";
         NSMutableArray *commands=[NSMutableArray new];for(int i=0;i<count;i++){
             NSString *label=labels[i]?[[NSString alloc] initWithUTF8String:labels[i]]:@"";[commands addObject:label?:@""];
         }
-        NSDictionary *info=@{@"title":heading?:[NSNull null],@"value":body?:@"",@"max":@(maxSize),@"constraints":@(constraints),@"commands":commands};
+        NSDictionary *info=@{@"tabId":@(tabId),@"title":heading?:[NSNull null],@"value":body?:@"",@"max":@(maxSize),@"constraints":@(constraints),@"commands":commands};
         dispatch_async(dispatch_get_main_queue(), ^{[[NSNotificationCenter defaultCenter] postNotificationName:EmModalNotification object:info];});
+    }
+}
+void em_platform_tab_finished(int tabId, int result) {
+    @autoreleasepool {
+        fprintf(stdout,"[TAB_FINISHED tab=%d result=%d]\n",tabId,result);fflush(stdout);
+        NSDictionary *info=@{@"tabId":@(tabId),@"result":@(result)};
+        dispatch_async(dispatch_get_main_queue(), ^{[[NSNotificationCenter defaultCenter] postNotificationName:EmTabFinishedNotification object:info];});
     }
 }
 void em_platform_browse(const char *url) {

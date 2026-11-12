@@ -61,10 +61,19 @@ def main(executable, javac):
         print(result.stdout)
         print(result.stderr)
         print("Host exit status:", result.returncode)
-        server.shutdown()
         if result.returncode or result.stdout.count("SMOKE_PASS:") != 2 or "SMOKE_FAIL:" in result.stdout + result.stderr:
             raise SystemExit("Interpreter smoke test failed")
-        print("PASS: actual miniJVM interpreter + MIDP graphics + RMS + TCP + HTTP")
+        multi_env = os.environ.copy()
+        multi_env["MICROEMU_MULTI_TAB"] = "1"
+        multi = subprocess.run([str(executable), str(resources / "minijvm_rt.jar"), str(resources / "microemu-ios.jar"),
+                                str(game), str(root / "rms-multi"), "15"],
+                               text=True, encoding="utf-8", errors="replace", capture_output=True, timeout=45, env=multi_env)
+        print(multi.stdout)
+        print(multi.stderr)
+        server.shutdown()
+        if multi.returncode or multi.stdout.count("SMOKE_PASS:") != 2 or "SMOKE_FAIL:" in multi.stdout + multi.stderr:
+            raise SystemExit("Multi-tab interpreter smoke test failed")
+        print("PASS: actual miniJVM interpreter + MIDP graphics + RMS + TCP + HTTP (single + multi-tab)")
 
 
 if __name__ == "__main__":

@@ -16,6 +16,7 @@ import org.microemu.device.ui.UIFactory;
 final class IOSDevice implements Device, DeviceDisplay, FontManager {
     final int width, height;
     final IOSImage screen;
+    private final IOSRuntime runtime;
     private final IOSUI ui = new IOSUI();
     private final Map properties = new HashMap();
     private final Map gameBuffers = new java.util.WeakHashMap();
@@ -46,7 +47,8 @@ final class IOSDevice implements Device, DeviceDisplay, FontManager {
         }
         public String getKeyName(int code) { return code >= 32 ? String.valueOf((char)code) : "Key " + code; }
     };
-    IOSDevice(int width, int height) {
+    IOSDevice(IOSRuntime runtime, int width, int height) {
+        this.runtime = runtime;
         this.width = width; this.height = height;
         screen = new IOSImage(NativeBridge.create(width, height, 0xff000000), true);
         properties.put("microedition.platform", "MicroEmu-iOS");
@@ -66,7 +68,11 @@ final class IOSDevice implements Device, DeviceDisplay, FontManager {
     public boolean hasPointerEvents() { return true; }
     public boolean hasPointerMotionEvents() { return true; }
     public boolean hasRepeatEvents() { return true; }
-    public boolean vibrate(int duration) { if (duration < 0) throw new IllegalArgumentException(); NativeBridge.vibrate(duration); return true; }
+    public boolean vibrate(int duration) {
+        if (duration < 0) throw new IllegalArgumentException();
+        if (runtime.isSleeping() || runtime.isStopped()) return false;
+        NativeBridge.vibrate(duration); return true;
+    }
     public Map getSystemProperties() { return properties; }
     public boolean flashBacklight(int duration) { return false; }
     public int getWidth() { return width; }
@@ -79,12 +85,19 @@ final class IOSDevice implements Device, DeviceDisplay, FontManager {
     public int numColors() { return 16777216; }
     public void setScrollDown(boolean value) { }
     public void setScrollUp(boolean value) { }
-    public synchronized void repaint(int x, int y, int w, int h) {
-        MIDletAccess access = MIDletBridge.getMIDletAccess();
-        if (access != null && access.getDisplayAccess() != null) {
-            access.getDisplayAccess().paint(new IOSGraphics(screen));
-            NativeBridge.present(screen.surface);
+    public void repaint(int x, int y, int w, int h) {
+        if (runtime.isStopped()) return;
+        if (runtime.isSleeping()) { runtime.sleepThrottle(); return; }
+        synchronized (this) {
+            MIDletAccess access = MIDletBridge.getMIDletAccess();
+            if (access != null && access.getDisplayAccess() != null) {
+                access.getDisplayAccess().paint(new IOSGraphics(screen));
+                NativeBridge.presentTab(runtime.tabId, screen.surface);
+            }
         }
+    }
+    synchronized void presentScreen() {
+        if (!runtime.isSleeping() && !runtime.isStopped()) NativeBridge.presentTab(runtime.tabId, screen.surface);
     }
     public Image createImage(int w, int h, boolean alpha, int fill) {
         return new IOSImage(NativeBridge.create(w, h, alpha ? fill : 0xff000000 | fill), true);
@@ -121,9 +134,14 @@ final class IOSDevice implements Device, DeviceDisplay, FontManager {
         return buffer;
     }
     public Graphics getGraphics(GameCanvas canvas) { return new IOSGraphics(gameBuffer(canvas)); }
-    public synchronized void flushGraphics(GameCanvas canvas, int x, int y, int w, int h) {
-        IOSGraphics graphics = new IOSGraphics(screen); graphics.setClip(x, y, w, h);
-        graphics.drawImage(gameBuffer(canvas), 0, 0, Graphics.TOP | Graphics.LEFT); NativeBridge.present(screen.surface);
+    public void flushGraphics(GameCanvas canvas, int x, int y, int w, int h) {
+        if (runtime.isStopped()) return;
+        if (runtime.isSleeping()) { runtime.sleepThrottle(); return; }
+        synchronized (this) {
+            IOSGraphics graphics = new IOSGraphics(screen); graphics.setClip(x, y, w, h);
+            graphics.drawImage(gameBuffer(canvas), 0, 0, Graphics.TOP | Graphics.LEFT);
+            NativeBridge.presentTab(runtime.tabId, screen.surface);
+        }
     }
     static int fontSize(Font font) { return font.getSize() == Font.SIZE_SMALL ? 12 : font.getSize() == Font.SIZE_LARGE ? 20 : 16; }
     public int charWidth(Font f, char c) { return stringWidth(f, String.valueOf(c)); }

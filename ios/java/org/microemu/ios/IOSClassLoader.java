@@ -27,4 +27,7 @@ final class IOSClassLoader extends ClassLoader {
         try { InputStream in = ownResource(name); return in != null ? in : super.getResourceAsStream(name); }
         catch(IOException error) { return null; }
     }
+    void close() {
+        try { archive.close(); } catch (IOException ignored) { }
+    }
 }

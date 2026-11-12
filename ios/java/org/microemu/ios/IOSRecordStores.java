@@ -27,7 +27,10 @@ public final class IOSRecordStores implements RecordStoreManager {
     }
     public IOSRecordStores(File directory) { this.directory = directory; }
     public void init(MicroEmulator emulator) {
-        if (!directory.isDirectory() && !directory.mkdirs()) throw new IllegalStateException("Cannot create RMS directory");
+        for (int attempt = 0; attempt < 3 && !directory.isDirectory(); attempt++) {
+            directory.mkdirs();
+        }
+        if (!directory.isDirectory()) throw new IllegalStateException("Cannot create RMS directory");
     }
     public String getName() { return "iOS persistent RMS"; }
     private File file(String name) throws RecordStoreException {

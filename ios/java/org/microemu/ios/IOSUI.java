@@ -29,7 +29,7 @@ final class IOSUI implements UIFactory {
     }
     static final class CanvasView extends Base implements CanvasUI {
         CanvasView(Canvas owner) { super(owner); }
-        public void showNotify() { NativeBridge.modal(null, null, 0, 0, new String[0]); }
+        public void showNotify() { NativeBridge.modalTab(IOSRuntime.currentTabId(), null, null, 0, 0, new String[0]); }
     }
     static final class TextView extends Base implements TextBoxUI {
         private String text = "";
@@ -44,7 +44,7 @@ final class IOSUI implements UIFactory {
             String title = box.getTitle();
             String current = box.getString();
             setString(current);
-            NativeBridge.modal(title == null ? "" : title, current == null ? "" : current, box.getMaxSize(), box.getConstraints(), labels());
+            NativeBridge.modalTab(IOSRuntime.currentTabId(), title == null ? "" : title, current == null ? "" : current, box.getMaxSize(), box.getConstraints(), labels());
         }
     }
     static final class AlertView extends Base implements AlertUI {
@@ -53,7 +53,7 @@ final class IOSUI implements UIFactory {
         public void setString(String text) { this.text = text; }
         public void showNotify() {
             String title = owner.getTitle();
-            NativeBridge.modal(title == null ? "" : title, text == null ? "" : text, 0, 0, labels());
+            NativeBridge.modalTab(IOSRuntime.currentTabId(), title == null ? "" : title, text == null ? "" : text, 0, 0, labels());
         }
     }
     static boolean softKey(DisplayAccess display, int index) {

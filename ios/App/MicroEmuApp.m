@@ -3,8 +3,8 @@
 #import <QuartzCore/QuartzCore.h>
 #import "AppPlatform.h"
 #include "emulator.h"
-#include <stdio.h>
 #include <math.h>
+#include <stdio.h>
 
 static BOOL runtimeActive;
 static void EmComputeVirtualSize(CGSize size, int *outWidth, int *outHeight) {
@@ -31,8 +31,19 @@ static NSURL *gamesDirectory(void) {
     NSURL *games=[documents URLByAppendingPathComponent:@"Games" isDirectory:YES];
     [[NSFileManager defaultManager] createDirectoryAtURL:games withIntermediateDirectories:YES attributes:nil error:nil];return games;
 }
+static NSArray<NSURL*> *listGameJars(void) {
+    NSArray<NSURL*> *items=[[[NSFileManager defaultManager] contentsOfDirectoryAtURL:gamesDirectory() includingPropertiesForKeys:nil options:NSDirectoryEnumerationSkipsHiddenFiles error:nil] filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSURL*url,NSDictionary*bindings){return [url.pathExtension.lowercaseString isEqualToString:@"jar"];}]];
+    return [items sortedArrayUsingComparator:^NSComparisonResult(NSURL*a,NSURL*b){return [a.lastPathComponent localizedCaseInsensitiveCompare:b.lastPathComponent];}]?:@[];
+}
+static NSString *rmsPathForSlot(int slot) {
+    NSURL *documents=[gamesDirectory() URLByDeletingLastPathComponent];
+    NSURL *dir=slot<=1?[documents URLByAppendingPathComponent:@"RMS" isDirectory:YES]:[[documents URLByAppendingPathComponent:@"RMS-Tabs" isDirectory:YES] URLByAppendingPathComponent:[NSString stringWithFormat:@"tab-%d",slot] isDirectory:YES];
+    [[NSFileManager defaultManager] createDirectoryAtURL:dir withIntermediateDirectories:YES attributes:nil error:nil];
+    return dir.path;
+}
 
 @interface GameScreen : UIImageView
+@property(nonatomic) int tabId;
 @property(nonatomic) int virtualWidth;
 @property(nonatomic) int virtualHeight;
 @property(nonatomic,weak) UITouch *pointer;
@@ -42,16 +53,22 @@ static NSURL *gamesDirectory(void) {
     CGSize size=self.bounds.size;CGFloat scale=MIN(size.width/self.virtualWidth,size.height/self.virtualHeight);
     CGPoint p=[touch locationInView:self];return CGPointMake((p.x-(size.width-self.virtualWidth*scale)/2)/scale,(p.y-(size.height-self.virtualHeight*scale)/2)/scale);
 }
+- (void)cancelPointer {
+    if(!self.pointer)return;
+    CGPoint p=[self position:self.pointer];
+    em_tab_event(self.tabId,6,(int)p.x,(int)p.y,0,NULL);
+    self.pointer=nil;
+}
 - (void)touchesBegan:(NSSet<UITouch*>*)touches withEvent:(UIEvent*)event {
     if(self.pointer)return;UITouch*t=touches.anyObject;CGPoint p=[self position:t];
     if(p.x<0 || p.y<0 || p.x>=self.virtualWidth || p.y>=self.virtualHeight)return;
-    self.pointer=t;em_event(4,(int)p.x,(int)p.y,0,NULL);
+    self.pointer=t;em_tab_event(self.tabId,4,(int)p.x,(int)p.y,0,NULL);
 }
 - (void)touchesMoved:(NSSet<UITouch*>*)touches withEvent:(UIEvent*)event {
-    if(!self.pointer || ![touches containsObject:self.pointer])return;CGPoint p=[self position:self.pointer];em_event(5,(int)p.x,(int)p.y,0,NULL);
+    if(!self.pointer || ![touches containsObject:self.pointer])return;CGPoint p=[self position:self.pointer];em_tab_event(self.tabId,5,(int)p.x,(int)p.y,0,NULL);
 }
 - (void)touchesEnded:(NSSet<UITouch*>*)touches withEvent:(UIEvent*)event {
-    if(!self.pointer || ![touches containsObject:self.pointer])return;CGPoint p=[self position:self.pointer];em_event(6,(int)p.x,(int)p.y,0,NULL);self.pointer=nil;
+    if(!self.pointer || ![touches containsObject:self.pointer])return;CGPoint p=[self position:self.pointer];em_tab_event(self.tabId,6,(int)p.x,(int)p.y,0,NULL);self.pointer=nil;
 }
 - (void)touchesCancelled:(NSSet<UITouch*>*)touches withEvent:(UIEvent*)event {[self touchesEnded:touches withEvent:event];}
 @end
@@ -71,8 +88,26 @@ static NSURL *gamesDirectory(void) {
 @property(nonatomic,strong) NSArray<NSNumber*> *keyCodes;
 @property(nonatomic,strong) NSTimer *repeatTimer;
 @property(nonatomic,strong) UIColor *idleColor;
+@property(nonatomic) BOOL active;
+@property(nonatomic) int pressedTabId;
 @end
 @implementation GamePadButton
+@end
+
+@interface GameTab : NSObject
+@property(nonatomic) int tabId;
+@property(nonatomic) int rmsSlot;
+@property(nonatomic,strong) NSURL *jar;
+@property(nonatomic) int virtualWidth;
+@property(nonatomic) int virtualHeight;
+@property(nonatomic,strong) UIImage *lastImage;
+@property(nonatomic,copy) NSString *statusText;
+@property(nonatomic) BOOL started;
+@property(nonatomic) BOOL finished;
+@property(nonatomic) BOOL stopping;
+@property(nonatomic) BOOL sleeping;
+@end
+@implementation GameTab
 @end
 
 @interface GameController : UIViewController <UITextFieldDelegate>
@@ -83,31 +118,47 @@ static NSURL *gamesDirectory(void) {
 @property(nonatomic,strong) UIButton *padToggle;
 @property(nonatomic,strong) UIStackView *numpadGrid;
 @property(nonatomic,strong) UIStackView *dpadGrid;
-@property(nonatomic,strong) NSMutableArray<GamePadButton*> *padButtons;
-@property(nonatomic,strong) UIView *inputBar;
-@property(nonatomic,strong) GameKeyTextField *keyboardField;
-@property(nonatomic,copy) NSString *lastSentText;
 @property(nonatomic,strong) NSArray<NSLayoutConstraint*> *portraitPadConstraints;
 @property(nonatomic,strong) NSArray<NSLayoutConstraint*> *landscapePadConstraints;
 @property(nonatomic,strong) NSArray<NSLayoutConstraint*> *padHiddenConstraints;
 @property(nonatomic) BOOL padHidden;
+@property(nonatomic,strong) UIView *inputBar;
+@property(nonatomic,strong) GameKeyTextField *keyboardField;
+@property(nonatomic,copy) NSString *lastSentText;
+@property(nonatomic,strong) NSMutableArray<GamePadButton*> *padButtons;
 @property(nonatomic,strong) CADisplayLink *displayLink;
 @property(nonatomic,strong) UIAlertController *textModal;
 @property(nonatomic) NSInteger maxTextLength;
-@property(nonatomic) BOOL finished;
-@property(nonatomic) BOOL stopping;
-@property(nonatomic) BOOL runtimeStarted;
+@property(nonatomic,strong) NSMutableArray<GameTab*> *tabs;
+@property(nonatomic) int activeTabId;
+@property(nonatomic) int nextTabId;
+@property(nonatomic) BOOL hostStarted;
+@property(nonatomic) BOOL hostFinished;
+@property(nonatomic) BOOL closingHost;
+@property(nonatomic,strong) UIBarButtonItem *stopItem;
+@property(nonatomic,strong) UIBarButtonItem *newTabItem;
+@property(nonatomic,strong) UIButton *tabSelector;
 @end
 
 @implementation GameController
 - (void)viewDidLoad {
-    [super viewDidLoad];self.view.backgroundColor=[UIColor colorWithWhite:0.045 alpha:1];self.title=self.jar.lastPathComponent;
+    [super viewDidLoad];self.view.backgroundColor=[UIColor colorWithWhite:0.045 alpha:1];
     self.navigationItem.largeTitleDisplayMode=UINavigationItemLargeTitleDisplayModeNever;
-    self.navigationItem.hidesBackButton=YES;self.navigationItem.leftBarButtonItem=[[UIBarButtonItem alloc] initWithTitle:@"Stop" style:UIBarButtonItemStylePlain target:self action:@selector(stop)];
+    self.navigationItem.hidesBackButton=YES;
+    self.tabs=[NSMutableArray new];self.padButtons=[NSMutableArray new];self.lastSentText=@"";
+    self.stopItem=[[UIBarButtonItem alloc] initWithTitle:@"Stop" style:UIBarButtonItemStylePlain target:self action:@selector(stop)];
+    self.newTabItem=[[UIBarButtonItem alloc] initWithTitle:@"New tab" style:UIBarButtonItemStylePlain target:self action:@selector(newTab)];
+    self.navigationItem.leftBarButtonItems=@[self.stopItem,self.newTabItem];
+    self.tabSelector=[UIButton buttonWithType:UIButtonTypeSystem];
+    self.tabSelector.showsMenuAsPrimaryAction=YES;self.tabSelector.tintColor=UIColor.whiteColor;
+    self.tabSelector.titleLabel.font=[UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
+    self.tabSelector.titleLabel.lineBreakMode=NSLineBreakByTruncatingMiddle;
+    [self.tabSelector setTitle:[self.jar.lastPathComponent stringByAppendingString:@" ▾"] forState:UIControlStateNormal];
+    [self.tabSelector sizeToFit];
+    self.navigationItem.titleView=self.tabSelector;
     self.navigationItem.rightBarButtonItems=@[
         [[UIBarButtonItem alloc] initWithTitle:@"Log" style:UIBarButtonItemStylePlain target:self action:@selector(shareLog)],
         [[UIBarButtonItem alloc] initWithTitle:@"Keyboard" style:UIBarButtonItemStylePlain target:self action:@selector(keyboard)]];
-    self.padButtons=[NSMutableArray new];self.lastSentText=@"";
     self.screen=[GameScreen new];self.screen.virtualWidth=480;self.screen.virtualHeight=320;
     self.screen.contentMode=UIViewContentModeScaleAspectFit;self.screen.userInteractionEnabled=YES;self.screen.multipleTouchEnabled=YES;self.screen.layer.magnificationFilter=kCAFilterNearest;
     self.statusRow=[UIView new];
@@ -182,12 +233,16 @@ static NSURL *gamesDirectory(void) {
         [self.inputBar.heightAnchor constraintEqualToConstant:48],
         [self.inputBar.bottomAnchor constraintEqualToAnchor:self.view.keyboardLayoutGuide.topAnchor]]];
     [self updatePadLayout];
-    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(statusChanged:) name:EmStatusNotification object:nil];
-    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(modalChanged:) name:EmModalNotification object:nil];
-    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(keyboardWillHide:) name:UIKeyboardWillHideNotification object:nil];
+    NSNotificationCenter *nc=[NSNotificationCenter defaultCenter];
+    [nc addObserver:self selector:@selector(statusChanged:) name:EmStatusNotification object:nil];
+    [nc addObserver:self selector:@selector(modalChanged:) name:EmModalNotification object:nil];
+    [nc addObserver:self selector:@selector(tabFinished:) name:EmTabFinishedNotification object:nil];
+    [nc addObserver:self selector:@selector(keyboardWillHide:) name:UIKeyboardWillHideNotification object:nil];
+    [nc addObserver:self selector:@selector(appDidEnterBackground) name:UIApplicationDidEnterBackgroundNotification object:nil];
+    [nc addObserver:self selector:@selector(appWillEnterForeground) name:UIApplicationWillEnterForegroundNotification object:nil];
     self.displayLink=[CADisplayLink displayLinkWithTarget:self selector:@selector(frame)];self.displayLink.preferredFramesPerSecond=30;[self.displayLink addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
     self.navigationController.interactivePopGestureRecognizer.enabled=NO;[UIApplication sharedApplication].idleTimerDisabled=YES;
-    EmClearFrame();em_reset_events();runtimeActive=YES;
+    EmClearAllFrames();em_reset_events();runtimeActive=YES;
 }
 - (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];
@@ -198,28 +253,158 @@ static NSURL *gamesDirectory(void) {
     [self updatePadLayout];
     [self startRuntimeIfReady];
 }
+- (GameTab*)tabWithId:(int)tabId {
+    for(GameTab *tab in self.tabs)if(tab.tabId==tabId)return tab;
+    return nil;
+}
+- (GameTab*)activeTab {
+    return [self tabWithId:self.activeTabId];
+}
+- (int)nextFreeRmsSlot {
+    for(int slot=1;;slot++){
+        BOOL used=NO;
+        for(GameTab *tab in self.tabs)if(tab.rmsSlot==slot){used=YES;break;}
+        if(!used)return slot;
+    }
+}
+- (void)updateTabSelector {
+    GameTab *active=[self activeTab];
+    NSString *title=active?[NSString stringWithFormat:@"%d · %@ ▾",active.tabId,active.jar.lastPathComponent]:[self.jar.lastPathComponent stringByAppendingString:@" ▾"];
+    [self.tabSelector setTitle:title forState:UIControlStateNormal];
+    [self.tabSelector sizeToFit];
+    NSMutableArray<UIAction*> *actions=[NSMutableArray new];
+    __weak GameController *weakSelf=self;
+    for(GameTab *tab in self.tabs){
+        NSString *suffix=tab.tabId==self.activeTabId?@"":(tab.finished?@" · Stopped":@" · Sleep");
+        NSString *label=[NSString stringWithFormat:@"Tab %d · %@%@",tab.tabId,tab.jar.lastPathComponent,suffix];
+        int targetId=tab.tabId;
+        UIAction *action=[UIAction actionWithTitle:label image:nil identifier:nil handler:^(UIAction*a){
+            [weakSelf switchToTab:targetId];
+        }];
+        action.state=tab.tabId==self.activeTabId?UIMenuElementStateOn:UIMenuElementStateOff;
+        [actions addObject:action];
+    }
+    self.tabSelector.menu=[UIMenu menuWithTitle:@"Tabs" children:actions];
+}
 - (void)startRuntimeIfReady {
-    if(self.runtimeStarted || self.finished || self.stopping || !self.view.window)return;
+    if(self.hostStarted || self.closingHost || !self.view.window)return;
     [self.view layoutIfNeeded];
     CGSize bounds=self.screen.bounds.size;
     if(bounds.width<=0 || bounds.height<=0)return;
-    int width=480,height=320;
-    EmComputeVirtualSize(bounds,&width,&height);
-    self.runtimeStarted=YES;
-    self.screen.virtualWidth=width;self.screen.virtualHeight=height;
-    NSString *bootstrap=[[NSBundle mainBundle] pathForResource:@"minijvm_rt" ofType:@"jar" inDirectory:@"Runtime"],*emulator=[[NSBundle mainBundle] pathForResource:@"microemu-ios" ofType:@"jar" inDirectory:@"Runtime"];
-    NSURL *documents=[gamesDirectory() URLByDeletingLastPathComponent];NSString *rms=[[documents URLByAppendingPathComponent:@"RMS" isDirectory:YES] path];
-    NSString *log=[[documents URLByAppendingPathComponent:@"microemu.log"] path];NSString *jar=self.jar.path;
+    self.hostStarted=YES;
+    NSString *bootstrap=[[NSBundle mainBundle] pathForResource:@"minijvm_rt" ofType:@"jar" inDirectory:@"Runtime"];
+    NSString *emulator=[[NSBundle mainBundle] pathForResource:@"microemu-ios" ofType:@"jar" inDirectory:@"Runtime"];
+    NSURL *documents=[gamesDirectory() URLByDeletingLastPathComponent];
+    NSString *log=[[documents URLByAppendingPathComponent:@"microemu.log"] path];
     __weak GameController *weakSelf=self;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0), ^{
         @autoreleasepool {
             freopen(log.fileSystemRepresentation,"w",stdout);freopen(log.fileSystemRepresentation,"a",stderr);setvbuf(stdout,NULL,_IOLBF,0);
-            int result=bootstrap && emulator?em_run(bootstrap.fileSystemRepresentation,emulator.fileSystemRepresentation,jar.fileSystemRepresentation,rms.fileSystemRepresentation,width,height):-1;
-            dispatch_async(dispatch_get_main_queue(), ^{GameController *owner=weakSelf;runtimeActive=NO;if(!owner)return;owner.finished=YES;
-                owner.status.text=result==0?@"Game stopped":@"Game error — see Log";owner.navigationItem.leftBarButtonItem.title=@"Back";
-                [UIApplication sharedApplication].idleTimerDisabled=NO;if(owner.stopping)[owner close];});
+            int result=bootstrap && emulator?em_host_run(bootstrap.fileSystemRepresentation,emulator.fileSystemRepresentation):-1;
+            dispatch_async(dispatch_get_main_queue(), ^{
+                GameController *owner=weakSelf;
+                runtimeActive=NO;
+                if(!owner)return;
+                owner.hostFinished=YES;
+                [UIApplication sharedApplication].idleTimerDisabled=NO;
+                if(owner.closingHost){[owner close];return;}
+                for(GameTab *tab in owner.tabs){
+                    tab.finished=YES;
+                    tab.statusText=result==0?@"Game stopped":@"Game error — see Log";
+                }
+                GameTab *active=[owner activeTab];
+                if(active){
+                    owner.status.text=active.statusText;
+                    owner.stopItem.title=owner.tabs.count>1?@"Close":@"Back";
+                }
+                [owner updateTabSelector];
+            });
         }
     });
+    [self openNewTabWithJar:self.jar];
+}
+- (void)cancelActiveInputs {
+    [self hideKeyboard];
+    [self.screen cancelPointer];
+    for(GamePadButton *button in self.padButtons){
+        [button.repeatTimer invalidate];button.repeatTimer=nil;
+        button.backgroundColor=button.idleColor;
+        if(button.active){
+            button.active=NO;
+            for(NSNumber *code in button.keyCodes)em_tab_event(button.pressedTabId,2,code.intValue,0,0,NULL);
+        }
+    }
+    if(self.textModal){[self.textModal dismissViewControllerAnimated:NO completion:nil];self.textModal=nil;}
+}
+- (void)openNewTabWithJar:(NSURL*)jarURL {
+    if(!jarURL || self.closingHost || self.hostFinished)return;
+    [self cancelActiveInputs];
+    GameTab *previous=[self activeTab];
+    if(previous){
+        previous.lastImage=self.screen.image;
+        previous.sleeping=YES;
+        if(!previous.finished)em_host_sleep_tab(previous.tabId,1);
+    }
+    [self.view layoutIfNeeded];
+    int width=480,height=320;
+    EmComputeVirtualSize(self.screen.bounds.size,&width,&height);
+    GameTab *tab=[GameTab new];
+    tab.tabId=++self.nextTabId;
+    tab.rmsSlot=[self nextFreeRmsSlot];
+    tab.jar=jarURL;
+    tab.virtualWidth=width;
+    tab.virtualHeight=height;
+    tab.statusText=@"Opening game…";
+    tab.started=YES;
+    [self.tabs addObject:tab];
+    self.activeTabId=tab.tabId;
+    self.screen.tabId=tab.tabId;
+    self.screen.virtualWidth=width;
+    self.screen.virtualHeight=height;
+    self.screen.image=nil;
+    self.status.text=tab.statusText;
+    self.stopItem.title=@"Stop";
+    EmClearFrame(tab.tabId);
+    NSString *rms=rmsPathForSlot(tab.rmsSlot);
+    em_host_open_tab(tab.tabId,jarURL.path.fileSystemRepresentation,rms.fileSystemRepresentation,width,height);
+    [self updateTabSelector];
+}
+- (void)switchToTab:(int)targetTabId {
+    if(targetTabId==self.activeTabId)return;
+    GameTab *next=[self tabWithId:targetTabId];
+    if(!next)return;
+    [self cancelActiveInputs];
+    GameTab *previous=[self activeTab];
+    if(previous){
+        previous.lastImage=self.screen.image;
+        previous.sleeping=YES;
+        if(!previous.finished)em_host_sleep_tab(previous.tabId,1);
+    }
+    self.activeTabId=next.tabId;
+    self.screen.tabId=next.tabId;
+    self.screen.virtualWidth=next.virtualWidth;
+    self.screen.virtualHeight=next.virtualHeight;
+    self.screen.image=next.lastImage;
+    self.status.text=next.statusText?:@"";
+    self.stopItem.title=next.finished?(self.tabs.count>1?@"Close":@"Back"):@"Stop";
+    next.sleeping=NO;
+    if(!next.finished)em_host_sleep_tab(next.tabId,0);
+    [self updateTabSelector];
+}
+- (void)newTab {
+    if(self.closingHost || self.hostFinished || self.presentedViewController)return;
+    NSArray<NSURL*> *jars=listGameJars();
+    if(!jars.count)return;
+    UIAlertController *sheet=[UIAlertController alertControllerWithTitle:@"New tab" message:@"Chọn game để mở ở tab mới (tab hiện tại sẽ chạy nền chế độ sleep)" preferredStyle:UIAlertControllerStyleActionSheet];
+    __weak GameController *weakSelf=self;
+    for(NSURL *jar in jars){
+        [sheet addAction:[UIAlertAction actionWithTitle:jar.lastPathComponent style:UIAlertActionStyleDefault handler:^(UIAction*a){
+            [weakSelf openNewTabWithJar:jar];
+        }]];
+    }
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Huỷ" style:UIAlertActionStyleCancel handler:nil]];
+    sheet.popoverPresentationController.barButtonItem=self.newTabItem;
+    [self presentViewController:sheet animated:YES completion:nil];
 }
 - (void)updatePadLayout {
     BOOL landscape=self.view.bounds.size.width>self.view.bounds.size.height;
@@ -258,20 +443,26 @@ static NSURL *gamesDirectory(void) {
     return button;
 }
 - (void)keyDown:(GamePadButton*)button {
-    if(self.finished || self.stopping)return;
+    GameTab *tab=[self activeTab];
+    if(!tab || tab.finished || tab.stopping)return;
+    button.active=YES;button.pressedTabId=tab.tabId;
     button.backgroundColor=[UIColor colorWithWhite:0.35 alpha:1];
     [button.repeatTimer invalidate];
-    for(NSNumber *code in button.keyCodes)em_event(1,code.intValue,0,0,NULL);
-    __block int ticks=0;__weak GamePadButton *weakButton=button;
+    for(NSNumber *code in button.keyCodes)em_tab_event(tab.tabId,1,code.intValue,0,0,NULL);
+    __block int ticks=0;__weak GamePadButton *weakButton=button;__weak GameController *weakSelf=self;
     button.repeatTimer=[NSTimer scheduledTimerWithTimeInterval:0.08 repeats:YES block:^(NSTimer*t){
-        GamePadButton *b=weakButton;if(!b)return;
-        if(++ticks>=4)for(NSNumber *code in b.keyCodes)em_event(3,code.intValue,0,0,NULL);
+        GamePadButton *b=weakButton;GameController *s=weakSelf;
+        if(!b || !s || !b.active || s.activeTabId!=b.pressedTabId)return;
+        if(++ticks>=4)for(NSNumber *code in b.keyCodes)em_tab_event(b.pressedTabId,3,code.intValue,0,0,NULL);
     }];
 }
 - (void)keyUp:(GamePadButton*)button {
     button.backgroundColor=button.idleColor;
     [button.repeatTimer invalidate];button.repeatTimer=nil;
-    if(!self.finished)for(NSNumber *code in button.keyCodes)em_event(2,code.intValue,0,0,NULL);
+    if(!button.active)return;
+    button.active=NO;
+    GameTab *tab=[self tabWithId:button.pressedTabId];
+    if(tab && !tab.finished)for(NSNumber *code in button.keyCodes)em_tab_event(button.pressedTabId,2,code.intValue,0,0,NULL);
 }
 - (void)setupKeyboardBar {
     self.inputBar=[UIView new];self.inputBar.backgroundColor=[UIColor colorWithWhite:0.1 alpha:0.98];self.inputBar.hidden=YES;
@@ -285,7 +476,11 @@ static NSURL *gamesDirectory(void) {
     self.keyboardField.spellCheckingType=UITextSpellCheckingTypeNo;self.keyboardField.returnKeyType=UIReturnKeySend;
     [self.keyboardField addTarget:self action:@selector(keyboardTextChanged) forControlEvents:UIControlEventEditingChanged];
     __weak GameController *weakSelf=self;
-    self.keyboardField.onEmptyBackspace=^{GameController *s=weakSelf;if(!s || s.finished || s.stopping)return;em_event(13,-8,0,0,NULL);};
+    self.keyboardField.onEmptyBackspace=^{
+        GameController *s=weakSelf;GameTab *t=[s activeTab];
+        if(!t || t.finished || t.stopping)return;
+        em_tab_event(t.tabId,13,-8,0,0,NULL);
+    };
     UIButton *leftKey=[UIButton buttonWithType:UIButtonTypeSystem];[leftKey setTitle:@"L" forState:UIControlStateNormal];
     leftKey.titleLabel.font=[UIFont systemFontOfSize:15 weight:UIFontWeightSemibold];leftKey.backgroundColor=[UIColor colorWithWhite:0.24 alpha:1];leftKey.tintColor=UIColor.whiteColor;leftKey.layer.cornerRadius=8;
     [leftKey addTarget:self action:@selector(keyboardSendLeft) forControlEvents:UIControlEventTouchUpInside];
@@ -305,30 +500,33 @@ static NSURL *gamesDirectory(void) {
         [done.leadingAnchor constraintEqualToAnchor:send.trailingAnchor constant:6],[done.trailingAnchor constraintEqualToAnchor:self.inputBar.trailingAnchor constant:-8],[done.centerYAnchor constraintEqualToAnchor:self.inputBar.centerYAnchor],[done.widthAnchor constraintEqualToConstant:52],[done.heightAnchor constraintEqualToConstant:34]]];
 }
 - (void)keyboardTextChanged {
-    if(self.finished || self.stopping)return;
+    GameTab *tab=[self activeTab];
+    if(!tab || tab.finished || tab.stopping)return;
     NSString *current=self.keyboardField.text?:@"";
     NSString *previous=self.lastSentText?:@"";
     if([current isEqualToString:previous])return;
     NSUInteger common=0,limit=MIN(previous.length,current.length);
     while(common<limit && [previous characterAtIndex:common]==[current characterAtIndex:common])common++;
     NSUInteger deletes=previous.length-common;
-    for(NSUInteger i=0;i<deletes;i++)em_event(13,-8,0,0,NULL);
+    for(NSUInteger i=0;i<deletes;i++)em_tab_event(tab.tabId,13,-8,0,0,NULL);
     NSString *added=[current substringFromIndex:common];
-    if(added.length>0)em_event(12,0,0,0,added.UTF8String);
+    if(added.length>0)em_tab_event(tab.tabId,12,0,0,0,added.UTF8String);
     self.lastSentText=[current copy];
 }
 - (void)keyboardSendLeft {
-    if(self.finished || self.stopping)return;
+    GameTab *tab=[self activeTab];
+    if(!tab || tab.finished || tab.stopping)return;
     [self.keyboardField unmarkText];
     [self keyboardTextChanged];
-    em_event(13,-6,0,0,NULL);
+    em_tab_event(tab.tabId,13,-6,0,0,NULL);
     self.keyboardField.text=@"";self.lastSentText=@"";
 }
 - (void)keyboardSendReturn {
-    if(self.finished || self.stopping)return;
+    GameTab *tab=[self activeTab];
+    if(!tab || tab.finished || tab.stopping)return;
     [self.keyboardField unmarkText];
     [self keyboardTextChanged];
-    em_event(13,-5,0,0,NULL);
+    em_tab_event(tab.tabId,13,-5,0,0,NULL);
     self.keyboardField.text=@"";self.lastSentText=@"";
 }
 - (void)hideKeyboard {
@@ -343,16 +541,34 @@ static NSURL *gamesDirectory(void) {
     self.keyboardField.text=@"";self.lastSentText=@"";self.inputBar.hidden=YES;
 }
 - (void)frame {
-    int width,height;NSData *data=EmConsumeFrame(&width,&height);if(!data)return;
+    if(!self.activeTabId)return;
+    int width,height;NSData *data=EmConsumeFrame(self.activeTabId,&width,&height);if(!data)return;
     CGColorSpaceRef color=CGColorSpaceCreateDeviceRGB();CGDataProviderRef provider=CGDataProviderCreateWithCFData((__bridge CFDataRef)data);
     CGImageRef image=CGImageCreate(width,height,8,32,width*4,color,kCGBitmapByteOrder32Little|kCGImageAlphaFirst,provider,NULL,NO,kCGRenderingIntentDefault);
-    if(image){self.screen.image=[UIImage imageWithCGImage:image];CGImageRelease(image);}CGDataProviderRelease(provider);CGColorSpaceRelease(color);
+    if(image){
+        UIImage *uiImage=[UIImage imageWithCGImage:image];
+        self.screen.image=uiImage;
+        GameTab *active=[self activeTab];
+        if(active)active.lastImage=uiImage;
+        CGImageRelease(image);
+    }
+    CGDataProviderRelease(provider);CGColorSpaceRelease(color);
 }
-- (void)statusChanged:(NSNotification*)notification {self.status.text=notification.object;}
+- (void)statusChanged:(NSNotification*)notification {
+    NSDictionary *info=notification.object;
+    int tabId=[info[@"tabId"] intValue];
+    NSString *text=info[@"text"]?:@"";
+    GameTab *tab=[self tabWithId:tabId];
+    if(tab)tab.statusText=text;
+    if(tabId==self.activeTabId)self.status.text=text;
+}
 - (void)modalChanged:(NSNotification*)notification {
     NSDictionary *info=notification.object;
+    int tabId=[info[@"tabId"] intValue];
+    if(tabId!=self.activeTabId)return;
+    GameTab *tab=[self tabWithId:tabId];
     if(info[@"title"]==NSNull.null){[self.textModal dismissViewControllerAnimated:NO completion:nil];self.textModal=nil;return;}
-    if(self.finished || self.stopping)return;
+    if(!tab || tab.finished || tab.stopping)return;
     [self hideKeyboard];
     NSString *title=[info[@"title"] length]?info[@"title"]:nil;
     UIAlertController *alert=[UIAlertController alertControllerWithTitle:title message:[info[@"max"] intValue]>0?nil:info[@"value"] preferredStyle:UIAlertControllerStyleAlert];
@@ -365,15 +581,54 @@ static NSURL *gamesDirectory(void) {
     for(NSUInteger i=0;i<commands.count;i++){
         [alert addAction:[UIAlertAction actionWithTitle:commands[i] style:UIAlertActionStyleDefault handler:^(UIAlertAction*a){
             NSString *value=weakAlert.textFields.firstObject.text?:@"";
-            em_event(7,(int)i,0,0,value.UTF8String);
+            em_tab_event(tabId,7,(int)i,0,0,value.UTF8String);
             if(weakSelf)weakSelf.textModal=nil;
         }]];
     }
     UIViewController *previous=self.textModal?:self.presentedViewController;
     self.textModal=alert;
-    void (^presentAlert)(void)=^{if(!weakSelf.finished && !weakSelf.stopping && weakSelf.textModal==alert)[weakSelf presentViewController:alert animated:YES completion:nil];};
+    void (^presentAlert)(void)=^{
+        GameTab *current=[weakSelf activeTab];
+        if(current && current.tabId==tabId && !current.finished && !current.stopping && weakSelf.textModal==alert)
+            [weakSelf presentViewController:alert animated:YES completion:nil];
+    };
     if(previous)[previous dismissViewControllerAnimated:NO completion:presentAlert];
     else presentAlert();
+}
+- (void)tabFinished:(NSNotification*)notification {
+    NSDictionary *info=notification.object;
+    int tabId=[info[@"tabId"] intValue];
+    int result=[info[@"result"] intValue];
+    GameTab *tab=[self tabWithId:tabId];
+    if(!tab)return;
+    tab.finished=YES;
+    EmClearFrame(tabId);
+    if(tab.stopping){[self removeTab:tab];return;}
+    tab.statusText=result==0?@"Game stopped":@"Game error — see Log";
+    if(tabId==self.activeTabId){
+        self.status.text=tab.statusText;
+        self.stopItem.title=self.tabs.count>1?@"Close":@"Back";
+    }
+    [self updateTabSelector];
+}
+- (void)removeTab:(GameTab*)tab {
+    BOOL wasActive=(tab.tabId==self.activeTabId);
+    [self.tabs removeObject:tab];
+    EmClearFrame(tab.tabId);
+    em_tab_reset_events(tab.tabId);
+    if(!self.tabs.count){
+        if(!self.hostStarted || self.hostFinished){runtimeActive=NO;[self close];return;}
+        self.closingHost=YES;
+        self.activeTabId=0;self.screen.tabId=0;
+        em_host_shutdown();
+        return;
+    }
+    if(wasActive){
+        self.activeTabId=0;
+        [self switchToTab:self.tabs.firstObject.tabId];
+    } else {
+        [self updateTabSelector];
+    }
 }
 - (BOOL)textField:(UITextField*)field shouldChangeCharactersInRange:(NSRange)range replacementString:(NSString*)replacement {
     if(field==self.keyboardField)return YES;
@@ -389,21 +644,42 @@ static NSURL *gamesDirectory(void) {
     UIActivityViewController *share=[[UIActivityViewController alloc] initWithActivityItems:@[log] applicationActivities:nil];share.popoverPresentationController.barButtonItem=self.navigationItem.rightBarButtonItems.firstObject;[self presentViewController:share animated:YES completion:nil];
 }
 - (void)keyboard {
-    if(self.finished || self.stopping || self.presentedViewController)return;
+    GameTab *tab=[self activeTab];
+    if(!tab || tab.finished || tab.stopping || self.presentedViewController)return;
     if(self.keyboardField.isFirstResponder){[self hideKeyboard];return;}
     self.keyboardField.text=@"";self.lastSentText=@"";
     self.inputBar.hidden=NO;[self.view bringSubviewToFront:self.inputBar];
     [self.keyboardField becomeFirstResponder];
 }
-- (void)stop {
-    if(self.finished){[self close];return;}if(self.stopping)return;self.stopping=YES;self.status.text=@"Stopping game…";
-    if(!self.runtimeStarted){runtimeActive=NO;self.finished=YES;[UIApplication sharedApplication].idleTimerDisabled=NO;[self close];return;}
-    [self hideKeyboard];
-    for(GamePadButton *button in self.padButtons){[button.repeatTimer invalidate];button.repeatTimer=nil;}
-    [self.textModal dismissViewControllerAnimated:NO completion:nil];self.textModal=nil;em_event(10,0,0,0,NULL);
+- (void)appDidEnterBackground {
+    for(GameTab *tab in self.tabs)if(!tab.finished)em_tab_event(tab.tabId,8,0,0,0,NULL);
 }
-- (void)close {[self.displayLink invalidate];self.displayLink=nil;self.navigationController.interactivePopGestureRecognizer.enabled=YES;[self.navigationController popViewControllerAnimated:YES];}
-- (void)dealloc {[[NSNotificationCenter defaultCenter] removeObserver:self];[self.displayLink invalidate];for(GamePadButton *button in self.padButtons)[button.repeatTimer invalidate];}
+- (void)appWillEnterForeground {
+    for(GameTab *tab in self.tabs)if(!tab.finished)em_tab_event(tab.tabId,9,0,0,0,NULL);
+}
+- (void)stop {
+    GameTab *tab=[self activeTab];
+    if(!tab){
+        if(!self.hostStarted || self.hostFinished){runtimeActive=NO;[self close];}
+        return;
+    }
+    if(tab.finished || self.hostFinished){[self removeTab:tab];return;}
+    if(tab.stopping)return;
+    tab.stopping=YES;tab.statusText=@"Stopping game…";self.status.text=tab.statusText;
+    [self cancelActiveInputs];
+    em_host_close_tab(tab.tabId);
+}
+- (void)close {
+    [self.displayLink invalidate];self.displayLink=nil;
+    [UIApplication sharedApplication].idleTimerDisabled=NO;
+    self.navigationController.interactivePopGestureRecognizer.enabled=YES;
+    [self.navigationController popViewControllerAnimated:YES];
+}
+- (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+    [self.displayLink invalidate];
+    for(GamePadButton *button in self.padButtons)[button.repeatTimer invalidate];
+}
 @end
 
 @interface LibraryController : UITableViewController <UIDocumentPickerDelegate>
@@ -415,7 +691,7 @@ static NSURL *gamesDirectory(void) {
     self.navigationItem.rightBarButtonItem=[[UIBarButtonItem alloc] initWithTitle:@"Import JAR" style:UIBarButtonItemStylePlain target:self action:@selector(importJar)];
     self.tableView.backgroundColor=UIColor.systemGroupedBackgroundColor;
 }
-- (void)viewWillAppear:(BOOL)animated {[super viewWillAppear:animated];self.games=[[[NSFileManager defaultManager] contentsOfDirectoryAtURL:gamesDirectory() includingPropertiesForKeys:nil options:NSDirectoryEnumerationSkipsHiddenFiles error:nil] filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSURL*url,NSDictionary*bindings){return [url.pathExtension.lowercaseString isEqualToString:@"jar"];}]];self.games=[self.games sortedArrayUsingComparator:^NSComparisonResult(NSURL*a,NSURL*b){return [a.lastPathComponent localizedCaseInsensitiveCompare:b.lastPathComponent];}];[self.tableView reloadData];}
+- (void)viewWillAppear:(BOOL)animated {[super viewWillAppear:animated];self.games=listGameJars();[self.tableView reloadData];}
 - (NSInteger)tableView:(UITableView*)tableView numberOfRowsInSection:(NSInteger)section {return self.games.count;}
 - (UITableViewCell*)tableView:(UITableView*)tableView cellForRowAtIndexPath:(NSIndexPath*)index {
     UITableViewCell *cell=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];cell.textLabel.text=self.games[index.row].lastPathComponent;cell.detailTextLabel.text=@"Java ME · Full Screen";cell.imageView.image=[UIImage systemImageNamed:@"gamecontroller.fill"];cell.accessoryType=UITableViewCellAccessoryDisclosureIndicator;return cell;
@@ -440,7 +716,5 @@ static NSURL *gamesDirectory(void) {
 - (BOOL)application:(UIApplication*)application didFinishLaunchingWithOptions:(NSDictionary*)options {
     self.window=[[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];UINavigationController *navigation=[[UINavigationController alloc] initWithRootViewController:[[LibraryController alloc] initWithStyle:UITableViewStyleInsetGrouped]];navigation.navigationBar.prefersLargeTitles=YES;self.window.rootViewController=navigation;self.window.overrideUserInterfaceStyle=UIUserInterfaceStyleDark;[self.window makeKeyAndVisible];return YES;
 }
-- (void)applicationDidEnterBackground:(UIApplication*)application {if(runtimeActive)em_event(8,0,0,0,NULL);}
-- (void)applicationWillEnterForeground:(UIApplication*)application {if(runtimeActive)em_event(9,0,0,0,NULL);}
 @end
 int main(int argc,char**argv){@autoreleasepool{return UIApplicationMain(argc,argv,nil,NSStringFromClass(AppDelegate.class));}}
