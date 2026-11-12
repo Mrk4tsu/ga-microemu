@@ -4,11 +4,16 @@ from pathlib import Path
 import plistlib
 import stat
 import struct
+import sys
 import tempfile
 import unittest
 import zipfile
 
-module = importlib.util.spec_from_file_location("package_ipa", Path(__file__).resolve().parents[1] / "tools/package_ipa.py")
+TOOLS = Path(__file__).resolve().parents[1] / "tools"
+sys.path.insert(0, str(TOOLS))
+import runtime_crypto
+
+module = importlib.util.spec_from_file_location("package_ipa", TOOLS / "package_ipa.py")
 packaging = importlib.util.module_from_spec(module)
 module.loader.exec_module(packaging)
 
@@ -38,6 +43,9 @@ class PackagingTests(unittest.TestCase):
                 self.assertIn("Payload/MicroEmu.app/Runtime/", archive.namelist())
                 self.assertTrue(stat.S_ISDIR(archive.getinfo("Payload/").external_attr >> 16))
                 self.assertIn("Payload/MicroEmu.app/Info.plist", archive.namelist())
+                rt_blob = archive.read("Payload/MicroEmu.app/Runtime/minijvm_rt.jar")
+                self.assertTrue(rt_blob.startswith(runtime_crypto.MAGIC))
+                self.assertEqual(runtime_crypto.decrypt_blob(rt_blob), b"jar")
 
     def test_arm_simulator_is_rejected(self):
         with tempfile.TemporaryDirectory() as temp:

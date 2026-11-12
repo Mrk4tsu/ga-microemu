@@ -53,6 +53,10 @@ class GenerateProjectTests(unittest.TestCase):
             self.assertEqual(spec["options"]["deploymentTarget"]["iOS"], "12.0")
             self.assertEqual(spec["settings"]["base"]["IPHONEOS_DEPLOYMENT_TARGET"], "12.0")
             self.assertEqual(spec["settings"]["base"]["ASSETCATALOG_COMPILER_APPICON_NAME"], "AppIcon")
+            release = spec["settings"]["configs"]["Release"]
+            self.assertEqual(release["STRIP_INSTALLED_PRODUCT"], "YES")
+            self.assertEqual(release["DEPLOYMENT_POSTPROCESSING"], "YES")
+            self.assertEqual(release["GCC_SYMBOLS_PRIVATE_EXTERN"], "YES")
             deps = [d["sdk"] for d in spec["targets"]["MicroEmu"]["dependencies"]]
             self.assertNotIn("UniformTypeIdentifiers.framework", deps)
             sources = spec["targets"]["MicroEmu"]["sources"]

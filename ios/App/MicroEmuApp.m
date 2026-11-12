@@ -996,4 +996,18 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
     self.window.rootViewController=navigation;[self.window makeKeyAndVisible];return YES;
 }
 @end
-int main(int argc,char**argv){@autoreleasepool{return UIApplicationMain(argc,argv,nil,NSStringFromClass(AppDelegate.class));}}
+#if !defined(DEBUG) && defined(__APPLE__)
+#import <dlfcn.h>
+#include <sys/types.h>
+static void emDenyDebugger(void) {
+    char sym[]={'p','t','r','a','c','e',0};
+    int (*fn)(int,pid_t,char*,int)=(int(*)(int,pid_t,char*,int))dlsym(RTLD_DEFAULT,sym);
+    if(fn)fn(31,0,0,0);
+}
+#endif
+int main(int argc,char**argv){
+#if !defined(DEBUG) && defined(__APPLE__)
+    emDenyDebugger();
+#endif
+    @autoreleasepool{return UIApplicationMain(argc,argv,nil,NSStringFromClass(AppDelegate.class));}
+}

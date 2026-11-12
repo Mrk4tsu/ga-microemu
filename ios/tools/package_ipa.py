@@ -5,7 +5,13 @@ from pathlib import Path
 import plistlib
 import stat
 import struct
+import sys
 import zipfile
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from runtime_crypto import encrypt_blob
+
+ENCRYPTED_RUNTIME_FILES = frozenset({"Runtime/minijvm_rt.jar", "Runtime/microemu-ios.jar"})
 
 
 def package(app, output):
@@ -40,7 +46,8 @@ def package(app, output):
         archive.writestr(_dir_entry("Payload/"), b"")
         archive.writestr(_dir_entry("Payload/" + app.name + "/"), b"")
         for item in sorted(app.rglob("*")):
-            name = "Payload/" + app.name + "/" + item.relative_to(app).as_posix()
+            rel = item.relative_to(app).as_posix()
+            name = "Payload/" + app.name + "/" + rel
             if item.is_dir():
                 archive.writestr(_dir_entry(name), b"")
                 continue
@@ -50,7 +57,10 @@ def package(app, output):
             entry.create_system = 3
             entry.external_attr = (stat.S_IFREG | (0o755 if item == binary else 0o644)) << 16
             entry.compress_type = zipfile.ZIP_DEFLATED
-            archive.writestr(entry, item.read_bytes())
+            payload = item.read_bytes()
+            if rel in ENCRYPTED_RUNTIME_FILES:
+                payload = encrypt_blob(payload)
+            archive.writestr(entry, payload)
     print(output)
 
 

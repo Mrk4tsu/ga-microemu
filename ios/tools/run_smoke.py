@@ -6,11 +6,14 @@ from pathlib import Path
 import socket
 import socketserver
 import subprocess
+import sys
 import tempfile
 import threading
 import zipfile
 
 IOS = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(IOS / "tools"))
+from runtime_crypto import encrypt_blob
 
 
 class Handler(socketserver.BaseRequestHandler):
@@ -70,10 +73,23 @@ def main(executable, javac):
                                text=True, encoding="utf-8", errors="replace", capture_output=True, timeout=45, env=multi_env)
         print(multi.stdout)
         print(multi.stderr)
-        server.shutdown()
         if multi.returncode or multi.stdout.count("SMOKE_PASS:") != 2 or "SMOKE_FAIL:" in multi.stdout + multi.stderr:
             raise SystemExit("Multi-tab interpreter smoke test failed")
-        print("PASS: actual miniJVM interpreter + MIDP graphics + RMS + TCP + HTTP (single + multi-tab)")
+        enc_dir = root / "enc-runtime"
+        enc_dir.mkdir()
+        enc_rt = enc_dir / "minijvm_rt.jar"
+        enc_emu = enc_dir / "microemu-ios.jar"
+        enc_rt.write_bytes(encrypt_blob((resources / "minijvm_rt.jar").read_bytes()))
+        enc_emu.write_bytes(encrypt_blob((resources / "microemu-ios.jar").read_bytes()))
+        enc_multi = subprocess.run([str(executable), str(enc_rt), str(enc_emu),
+                                    str(game), str(root / "rms-enc"), "15"],
+                                   text=True, encoding="utf-8", errors="replace", capture_output=True, timeout=45, env=multi_env)
+        print(enc_multi.stdout)
+        print(enc_multi.stderr)
+        server.shutdown()
+        if enc_multi.returncode or enc_multi.stdout.count("SMOKE_PASS:") != 2 or "SMOKE_FAIL:" in enc_multi.stdout + enc_multi.stderr:
+            raise SystemExit("Encrypted runtime multi-tab smoke test failed")
+        print("PASS: actual miniJVM interpreter + MIDP graphics + RMS + TCP + HTTP (single + multi-tab + encrypted runtime)")
 
 
 if __name__ == "__main__":

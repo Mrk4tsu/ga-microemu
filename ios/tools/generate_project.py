@@ -29,12 +29,28 @@ def generate(runtime, spec_only=False):
                 runtime / "mobile/c/gui/stb"]
     spec = {
         "name": "MicroEmu", "options": {"deploymentTarget": {"iOS": "12.0"}, "createIntermediateGroups": True},
-        "settings": {"base": {"PRODUCT_BUNDLE_IDENTIFIER": "com.gamod.microemu", "CODE_SIGNING_ALLOWED": "NO",
-            "CODE_SIGNING_REQUIRED": "NO", "CLANG_ENABLE_OBJC_ARC": "YES", "GCC_C_LANGUAGE_STANDARD": "gnu11",
-            "HEADER_SEARCH_PATHS": ["$(inherited)", *[str(p) for p in includes]],
-            "TARGETED_DEVICE_FAMILY": "1,2", "ENABLE_BITCODE": "NO", "GENERATE_INFOPLIST_FILE": "NO",
-            "INFOPLIST_FILE": "App/Info.plist", "IPHONEOS_DEPLOYMENT_TARGET": "12.0",
-            "ASSETCATALOG_COMPILER_APPICON_NAME": "AppIcon"}},
+        "settings": {
+            "base": {
+                "PRODUCT_BUNDLE_IDENTIFIER": "com.gamod.microemu", "CODE_SIGNING_ALLOWED": "NO",
+                "CODE_SIGNING_REQUIRED": "NO", "CLANG_ENABLE_OBJC_ARC": "YES", "GCC_C_LANGUAGE_STANDARD": "gnu11",
+                "HEADER_SEARCH_PATHS": ["$(inherited)", *[str(p) for p in includes]],
+                "TARGETED_DEVICE_FAMILY": "1,2", "ENABLE_BITCODE": "NO", "GENERATE_INFOPLIST_FILE": "NO",
+                "INFOPLIST_FILE": "App/Info.plist", "IPHONEOS_DEPLOYMENT_TARGET": "12.0",
+                "ASSETCATALOG_COMPILER_APPICON_NAME": "AppIcon",
+            },
+            "configs": {
+                "Release": {
+                    "DEPLOYMENT_POSTPROCESSING": "YES",
+                    "STRIP_INSTALLED_PRODUCT": "YES",
+                    "STRIP_STYLE": "all",
+                    "COPY_PHASE_STRIP": "YES",
+                    "DEAD_CODE_STRIPPING": "YES",
+                    "GCC_SYMBOLS_PRIVATE_EXTERN": "YES",
+                    "GCC_GENERATE_DEBUGGING_SYMBOLS": "NO",
+                    "ENABLE_NS_ASSERTIONS": "NO",
+                }
+            },
+        },
         "targets": {"MicroEmu": {"type": "application", "platform": "iOS",
             "sources": [{"path": _relative_source(p)} for p in sorted(paths)] + [
                 {"path": _relative_source(IOS / "App/Assets.xcassets")},

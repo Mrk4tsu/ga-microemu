@@ -17,7 +17,7 @@ def compile_jar(javac, sources, classes, output, boot=None, resources=()):
     if classes.exists():
         shutil.rmtree(classes)
     classes.mkdir(parents=True, exist_ok=True)
-    args = ["-encoding", "UTF-8", "-source", "8", "-target", "8", "-Xlint:-options", "-d", str(classes)]
+    args = ["-g:none", "-encoding", "UTF-8", "-source", "8", "-target", "8", "-Xlint:-options", "-d", str(classes)]
     if boot:
         args += ["-bootclasspath", str(boot)]
     # Quote every path in the javac argument file, also on Windows.
