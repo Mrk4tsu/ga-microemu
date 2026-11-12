@@ -157,7 +157,7 @@ static NSURL *gamesDirectory(void) {
 @end
 @implementation LibraryController
 - (void)viewDidLoad {
-    [super viewDidLoad];self.title=@"MicroEmu";self.navigationItem.largeTitleDisplayMode=UINavigationItemLargeTitleDisplayModeAlways;
+    [super viewDidLoad];self.title=@"GaEmulator";self.navigationItem.largeTitleDisplayMode=UINavigationItemLargeTitleDisplayModeAlways;
     self.navigationItem.rightBarButtonItem=[[UIBarButtonItem alloc] initWithTitle:@"Import JAR" style:UIBarButtonItemStylePlain target:self action:@selector(importJar)];
     self.tableView.backgroundColor=UIColor.systemGroupedBackgroundColor;
 }
