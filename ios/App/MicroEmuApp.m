@@ -136,7 +136,7 @@ static NSString *rmsPathForSlot(int slot) {
 @property(nonatomic) BOOL hostFinished;
 @property(nonatomic) BOOL closingHost;
 @property(nonatomic,strong) UIBarButtonItem *stopItem;
-@property(nonatomic,strong) UIBarButtonItem *newTabItem;
+@property(nonatomic,strong) UIBarButtonItem *addTabItem;
 @property(nonatomic,strong) UIButton *tabSelector;
 @end
 
@@ -147,8 +147,8 @@ static NSString *rmsPathForSlot(int slot) {
     self.navigationItem.hidesBackButton=YES;
     self.tabs=[NSMutableArray new];self.padButtons=[NSMutableArray new];self.lastSentText=@"";
     self.stopItem=[[UIBarButtonItem alloc] initWithTitle:@"Stop" style:UIBarButtonItemStylePlain target:self action:@selector(stop)];
-    self.newTabItem=[[UIBarButtonItem alloc] initWithTitle:@"New tab" style:UIBarButtonItemStylePlain target:self action:@selector(newTab)];
-    self.navigationItem.leftBarButtonItems=@[self.stopItem,self.newTabItem];
+    self.addTabItem=[[UIBarButtonItem alloc] initWithTitle:@"New tab" style:UIBarButtonItemStylePlain target:self action:@selector(newTab)];
+    self.navigationItem.leftBarButtonItems=@[self.stopItem,self.addTabItem];
     self.tabSelector=[UIButton buttonWithType:UIButtonTypeSystem];
     self.tabSelector.showsMenuAsPrimaryAction=YES;self.tabSelector.tintColor=UIColor.whiteColor;
     self.tabSelector.titleLabel.font=[UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
@@ -398,12 +398,12 @@ static NSString *rmsPathForSlot(int slot) {
     UIAlertController *sheet=[UIAlertController alertControllerWithTitle:@"New tab" message:@"Chọn game để mở ở tab mới (tab hiện tại sẽ chạy nền chế độ sleep)" preferredStyle:UIAlertControllerStyleActionSheet];
     __weak GameController *weakSelf=self;
     for(NSURL *jar in jars){
-        [sheet addAction:[UIAlertAction actionWithTitle:jar.lastPathComponent style:UIAlertActionStyleDefault handler:^(UIAction*a){
+        [sheet addAction:[UIAlertAction actionWithTitle:jar.lastPathComponent style:UIAlertActionStyleDefault handler:^(UIAlertAction*a){
             [weakSelf openNewTabWithJar:jar];
         }]];
     }
     [sheet addAction:[UIAlertAction actionWithTitle:@"Huỷ" style:UIAlertActionStyleCancel handler:nil]];
-    sheet.popoverPresentationController.barButtonItem=self.newTabItem;
+    sheet.popoverPresentationController.barButtonItem=self.addTabItem;
     [self presentViewController:sheet animated:YES completion:nil];
 }
 - (void)updatePadLayout {
