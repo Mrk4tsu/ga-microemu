@@ -2,11 +2,20 @@
 """Generate a small Xcode project without upstream mobile SDK integrations."""
 import argparse
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
 
 IOS = Path(__file__).resolve().parents[1]
+
+
+def _relative_source(path):
+    """Return a POSIX path relative to IOS when possible for XcodeGen."""
+    try:
+        return Path(os.path.relpath(path, IOS)).as_posix()
+    except ValueError:
+        return str(path)
 
 
 def generate(runtime, spec_only=False):
@@ -26,8 +35,8 @@ def generate(runtime, spec_only=False):
             "TARGETED_DEVICE_FAMILY": "1,2", "ENABLE_BITCODE": "NO", "GENERATE_INFOPLIST_FILE": "NO",
             "INFOPLIST_FILE": "App/Info.plist", "IPHONEOS_DEPLOYMENT_TARGET": "15.0"}},
         "targets": {"MicroEmu": {"type": "application", "platform": "iOS",
-            "sources": [{"path": str(p)} for p in sorted(paths)] + [
-                {"path": str(IOS / "Resources"), "buildPhase": "resources", "type": "folder"}],
+            "sources": [{"path": _relative_source(p)} for p in sorted(paths)] + [
+                {"path": _relative_source(IOS / "Resources"), "buildPhase": "resources", "type": "folder"}],
             "dependencies": [{"sdk": name + ".framework"} for name in
                 ("UIKit", "Foundation", "CoreGraphics", "CoreText", "QuartzCore", "AudioToolbox", "UniformTypeIdentifiers", "Security")],
             "scheme": {"gatherCoverageData": False}}},
@@ -62,7 +71,11 @@ def generate(runtime, spec_only=False):
     spec_path.parent.mkdir(parents=True, exist_ok=True)
     spec_path.write_text(json.dumps(spec, indent=2), encoding="utf-8")
     if not spec_only:
-        subprocess.run(["xcodegen", "generate", "--spec", str(spec_path), "--project", str(IOS)], check=True, cwd=IOS)
+        subprocess.run(
+            ["xcodegen", "generate", "--spec", str(spec_path), "--project", str(IOS), "--project-root", str(IOS)],
+            check=True,
+            cwd=IOS,
+        )
     print(spec_path)
 
 
