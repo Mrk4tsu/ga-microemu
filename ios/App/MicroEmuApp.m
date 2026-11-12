@@ -4,8 +4,28 @@
 #import "AppPlatform.h"
 #include "emulator.h"
 #include <stdio.h>
+#include <math.h>
 
 static BOOL runtimeActive;
+static void EmComputeVirtualSize(CGSize size, int *outWidth, int *outHeight) {
+    if (size.width <= 0 || size.height <= 0) {
+        *outWidth = 480;
+        *outHeight = 320;
+        return;
+    }
+    double width = size.width, height = size.height;
+    double scale = 1.0;
+    if (MAX(width, height) > 1920.0) scale = 1920.0 / MAX(width, height);
+    if (MIN(width, height) * scale < 128.0) scale = 128.0 / MIN(width, height);
+    int virtualWidth = (int)llround(width * scale);
+    int virtualHeight = (int)llround(height * scale);
+    if (virtualWidth < 128) virtualWidth = 128;
+    if (virtualWidth > 1920) virtualWidth = 1920;
+    if (virtualHeight < 128) virtualHeight = 128;
+    if (virtualHeight > 1920) virtualHeight = 1920;
+    *outWidth = virtualWidth;
+    *outHeight = virtualHeight;
+}
 static NSURL *gamesDirectory(void) {
     NSURL *documents=[[[NSFileManager defaultManager] URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask] firstObject];
     NSURL *games=[documents URLByAppendingPathComponent:@"Games" isDirectory:YES];
@@ -76,6 +96,7 @@ static NSURL *gamesDirectory(void) {
 @property(nonatomic) NSInteger maxTextLength;
 @property(nonatomic) BOOL finished;
 @property(nonatomic) BOOL stopping;
+@property(nonatomic) BOOL runtimeStarted;
 @end
 
 @implementation GameController
@@ -115,14 +136,11 @@ static NSURL *gamesDirectory(void) {
     [self setupKeyboardBar];
     for(UIView*v in @[self.screen,self.statusRow,self.numpadGrid,self.dpadGrid,self.inputBar]){v.translatesAutoresizingMaskIntoConstraints=NO;[self.view addSubview:v];}
     UILayoutGuide *safe=self.view.safeAreaLayoutGuide;
-    NSLayoutConstraint *aspect=[self.screen.heightAnchor constraintEqualToAnchor:self.screen.widthAnchor multiplier:2.0/3.0];
-    aspect.priority=999;
     self.portraitPadConstraints=@[
         [self.screen.topAnchor constraintEqualToAnchor:safe.topAnchor constant:4],
         [self.screen.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor],
         [self.screen.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor],
-        aspect,
-        [self.screen.bottomAnchor constraintLessThanOrEqualToAnchor:self.statusRow.topAnchor constant:-4],
+        [self.screen.bottomAnchor constraintEqualToAnchor:self.statusRow.topAnchor constant:-4],
         [self.statusRow.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor],
         [self.statusRow.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor],
         [self.statusRow.bottomAnchor constraintEqualToAnchor:self.numpadGrid.topAnchor constant:-6],
@@ -170,6 +188,25 @@ static NSURL *gamesDirectory(void) {
     self.displayLink=[CADisplayLink displayLinkWithTarget:self selector:@selector(frame)];self.displayLink.preferredFramesPerSecond=30;[self.displayLink addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
     self.navigationController.interactivePopGestureRecognizer.enabled=NO;[UIApplication sharedApplication].idleTimerDisabled=YES;
     EmClearFrame();em_reset_events();runtimeActive=YES;
+}
+- (void)viewDidAppear:(BOOL)animated {
+    [super viewDidAppear:animated];
+    [self startRuntimeIfReady];
+}
+- (void)viewDidLayoutSubviews {
+    [super viewDidLayoutSubviews];
+    [self updatePadLayout];
+    [self startRuntimeIfReady];
+}
+- (void)startRuntimeIfReady {
+    if(self.runtimeStarted || self.finished || self.stopping || !self.view.window)return;
+    [self.view layoutIfNeeded];
+    CGSize bounds=self.screen.bounds.size;
+    if(bounds.width<=0 || bounds.height<=0)return;
+    int width=480,height=320;
+    EmComputeVirtualSize(bounds,&width,&height);
+    self.runtimeStarted=YES;
+    self.screen.virtualWidth=width;self.screen.virtualHeight=height;
     NSString *bootstrap=[[NSBundle mainBundle] pathForResource:@"minijvm_rt" ofType:@"jar" inDirectory:@"Runtime"],*emulator=[[NSBundle mainBundle] pathForResource:@"microemu-ios" ofType:@"jar" inDirectory:@"Runtime"];
     NSURL *documents=[gamesDirectory() URLByDeletingLastPathComponent];NSString *rms=[[documents URLByAppendingPathComponent:@"RMS" isDirectory:YES] path];
     NSString *log=[[documents URLByAppendingPathComponent:@"microemu.log"] path];NSString *jar=self.jar.path;
@@ -177,25 +214,22 @@ static NSURL *gamesDirectory(void) {
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0), ^{
         @autoreleasepool {
             freopen(log.fileSystemRepresentation,"w",stdout);freopen(log.fileSystemRepresentation,"a",stderr);setvbuf(stdout,NULL,_IOLBF,0);
-            int result=bootstrap && emulator?em_run(bootstrap.fileSystemRepresentation,emulator.fileSystemRepresentation,jar.fileSystemRepresentation,rms.fileSystemRepresentation,480,320):-1;
-            dispatch_async(dispatch_get_main_queue(), ^{GameController *owner=weakSelf;runtimeActive=NO;owner.finished=YES;
+            int result=bootstrap && emulator?em_run(bootstrap.fileSystemRepresentation,emulator.fileSystemRepresentation,jar.fileSystemRepresentation,rms.fileSystemRepresentation,width,height):-1;
+            dispatch_async(dispatch_get_main_queue(), ^{GameController *owner=weakSelf;runtimeActive=NO;if(!owner)return;owner.finished=YES;
                 owner.status.text=result==0?@"Game stopped":@"Game error — see Log";owner.navigationItem.leftBarButtonItem.title=@"Back";
                 [UIApplication sharedApplication].idleTimerDisabled=NO;if(owner.stopping)[owner close];});
         }
     });
 }
-- (void)viewDidLayoutSubviews {
-    [super viewDidLayoutSubviews];
-    [self updatePadLayout];
-}
 - (void)updatePadLayout {
     BOOL landscape=self.view.bounds.size.width>self.view.bounds.size.height;
+    self.numpadGrid.hidden=self.padHidden;self.dpadGrid.hidden=self.padHidden;
+    NSArray<NSLayoutConstraint*> *target=self.padHidden?self.padHiddenConstraints:(landscape?self.landscapePadConstraints:self.portraitPadConstraints);
+    if(target.firstObject.active)return;
     [NSLayoutConstraint deactivateConstraints:self.portraitPadConstraints];
     [NSLayoutConstraint deactivateConstraints:self.landscapePadConstraints];
     [NSLayoutConstraint deactivateConstraints:self.padHiddenConstraints];
-    self.numpadGrid.hidden=self.padHidden;self.dpadGrid.hidden=self.padHidden;
-    if(self.padHidden)[NSLayoutConstraint activateConstraints:self.padHiddenConstraints];
-    else [NSLayoutConstraint activateConstraints:landscape?self.landscapePadConstraints:self.portraitPadConstraints];
+    [NSLayoutConstraint activateConstraints:target];
 }
 - (void)togglePad {
     self.padHidden=!self.padHidden;
@@ -363,6 +397,7 @@ static NSURL *gamesDirectory(void) {
 }
 - (void)stop {
     if(self.finished){[self close];return;}if(self.stopping)return;self.stopping=YES;self.status.text=@"Stopping game…";
+    if(!self.runtimeStarted){runtimeActive=NO;self.finished=YES;[UIApplication sharedApplication].idleTimerDisabled=NO;[self close];return;}
     [self hideKeyboard];
     for(GamePadButton *button in self.padButtons){[button.repeatTimer invalidate];button.repeatTimer=nil;}
     [self.textModal dismissViewControllerAnimated:NO completion:nil];self.textModal=nil;em_event(10,0,0,0,NULL);
@@ -383,7 +418,7 @@ static NSURL *gamesDirectory(void) {
 - (void)viewWillAppear:(BOOL)animated {[super viewWillAppear:animated];self.games=[[[NSFileManager defaultManager] contentsOfDirectoryAtURL:gamesDirectory() includingPropertiesForKeys:nil options:NSDirectoryEnumerationSkipsHiddenFiles error:nil] filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSURL*url,NSDictionary*bindings){return [url.pathExtension.lowercaseString isEqualToString:@"jar"];}]];self.games=[self.games sortedArrayUsingComparator:^NSComparisonResult(NSURL*a,NSURL*b){return [a.lastPathComponent localizedCaseInsensitiveCompare:b.lastPathComponent];}];[self.tableView reloadData];}
 - (NSInteger)tableView:(UITableView*)tableView numberOfRowsInSection:(NSInteger)section {return self.games.count;}
 - (UITableViewCell*)tableView:(UITableView*)tableView cellForRowAtIndexPath:(NSIndexPath*)index {
-    UITableViewCell *cell=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];cell.textLabel.text=self.games[index.row].lastPathComponent;cell.detailTextLabel.text=@"Java ME · 480 × 320";cell.imageView.image=[UIImage systemImageNamed:@"gamecontroller.fill"];cell.accessoryType=UITableViewCellAccessoryDisclosureIndicator;return cell;
+    UITableViewCell *cell=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];cell.textLabel.text=self.games[index.row].lastPathComponent;cell.detailTextLabel.text=@"Java ME · Full Screen";cell.imageView.image=[UIImage systemImageNamed:@"gamecontroller.fill"];cell.accessoryType=UITableViewCellAccessoryDisclosureIndicator;return cell;
 }
 - (NSString*)tableView:(UITableView*)tableView titleForFooterInSection:(NSInteger)section {return self.games.count?@"Tap a game to run it. Touch the game screen or use the buttons below it.":@"Import a MIDP JAR from Files to get started. Games run locally on your iPhone.";}
 - (void)tableView:(UITableView*)tableView didSelectRowAtIndexPath:(NSIndexPath*)index {if(runtimeActive)return;GameController *game=[GameController new];game.jar=self.games[index.row];[self.navigationController pushViewController:game animated:YES];}
