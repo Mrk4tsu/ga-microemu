@@ -36,14 +36,14 @@ def generate(runtime, spec_only=False):
             "INFOPLIST_FILE": "App/Info.plist", "IPHONEOS_DEPLOYMENT_TARGET": "15.0"}},
         "targets": {"MicroEmu": {"type": "application", "platform": "iOS",
             "sources": [{"path": _relative_source(p)} for p in sorted(paths)] + [
-                {"path": _relative_source(IOS / "Resources"), "buildPhase": "resources", "type": "folder"}],
+                {"path": _relative_source(IOS / "Runtime"), "buildPhase": "resources", "type": "folder"}],
             "dependencies": [{"sdk": name + ".framework"} for name in
                 ("UIKit", "Foundation", "CoreGraphics", "CoreText", "QuartzCore", "AudioToolbox", "UniformTypeIdentifiers", "Security")],
             "scheme": {"gatherCoverageData": False}}},
     }
-    # Folder resources preserve third-party notices; bootstrap JARs are loaded
-    # using the Resources subdirectory in the app bundle.
-    licenses = IOS / "Resources/ThirdParty"
+    # Use Runtime (not Resources) at the .app root so iOS CFBundle does not
+    # treat the shallow app bundle as a legacy Version-1 bundle layout.
+    licenses = IOS / "Runtime/ThirdParty"
     licenses.mkdir(parents=True, exist_ok=True)
     for source, target in [(runtime / "LICENSE", "miniJVM-MIT.txt"),
                             (runtime / "minijvm/java/LICENSE", "Runtime-GPL2.txt"),

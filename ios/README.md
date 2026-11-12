@@ -68,8 +68,8 @@ Các bài kiểm thử chạy Java trên JVM thông dịch thật, không giả 
 ```sh
 python3 ios/tools/inspect_midlet.py /path/to/game.jar
 ios/build/host/microemu-headless \
-  /absolute/path/ios/Resources/minijvm_rt.jar \
-  /absolute/path/ios/Resources/microemu-ios.jar \
+  /absolute/path/ios/Runtime/minijvm_rt.jar \
+  /absolute/path/ios/Runtime/microemu-ios.jar \
   /absolute/path/game.jar /absolute/path/rms 20 /absolute/path/frame.png
 ```
 
@@ -98,4 +98,4 @@ miniJVM được pin tại `76f904ea4008a8058db5155bf5ee2cfe94d19e60`. `prepare_
 
 `build_java.py` giữ bản CLDC networking của miniJVM, tránh đóng gói trùng `javax.microedition.io`; một overlay nguồn thay bốn phép `Calendar.add(DAY_OF_MONTH, …)` trong DateField bằng `set/get` vì bootstrap Calendar chỉ có API CLDC. Các module desktop của MicroEmulator giữ nguyên.
 
-MicroEmulator giữ nguyên thông tin tác giả và giấy phép có trong repo. Bootstrap Java của miniJVM gồm MIT và GPLv2 với Classpath exception; thư viện native có các giấy phép kèm nguồn. Bản build sao chép notice vào `Resources/ThirdParty` trong app. Các thay đổi mới trong `ios/` được cung cấp theo Apache-2.0.
+MicroEmulator giữ nguyên thông tin tác giả và giấy phép có trong repo. Bootstrap Java của miniJVM gồm MIT và GPLv2 với Classpath exception; thư viện native có các giấy phép kèm nguồn. Bản build sao chép notice vào `Runtime/ThirdParty` trong app. Các thay đổi mới trong `ios/` được cung cấp theo Apache-2.0.

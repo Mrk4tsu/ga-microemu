@@ -37,7 +37,7 @@ def compile_jar(javac, sources, classes, output, boot=None, resources=()):
 
 def build(runtime, javac="javac", runtime_only=False, skip_runtime=False):
     build_dir = IOS / "build/java"
-    resources = IOS / "Resources"
+    resources = IOS / "Runtime"
     runtime_main = runtime / "minijvm/java/src/main"
     rtjar = resources / "minijvm_rt.jar"
     if not skip_runtime:

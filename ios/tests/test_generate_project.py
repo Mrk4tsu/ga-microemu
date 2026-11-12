@@ -20,7 +20,7 @@ class GenerateProjectTests(unittest.TestCase):
             target = ios / rel
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("", encoding="utf-8")
-        (ios / "Resources").mkdir(parents=True, exist_ok=True)
+        (ios / "Runtime").mkdir(parents=True, exist_ok=True)
         (root / "microemulator").mkdir(parents=True, exist_ok=True)
         (root / "microemulator/COPYING-AL-2.0").write_text("Apache-2.0", encoding="utf-8")
 
@@ -50,7 +50,7 @@ class GenerateProjectTests(unittest.TestCase):
 
             spec = json.loads((ios / "build/project.json").read_text(encoding="utf-8"))
             sources = spec["targets"]["MicroEmu"]["sources"]
-            self.assertIn({"path": "Resources", "buildPhase": "resources", "type": "folder"}, sources)
+            self.assertIn({"path": "Runtime", "buildPhase": "resources", "type": "folder"}, sources)
             self.assertIn({"path": "App/MicroEmuApp.m"}, sources)
             self.assertIn({"path": "native/bridge.c"}, sources)
 

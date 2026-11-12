@@ -79,7 +79,7 @@ static NSURL *gamesDirectory(void) {
     self.displayLink=[CADisplayLink displayLinkWithTarget:self selector:@selector(frame)];self.displayLink.preferredFramesPerSecond=30;[self.displayLink addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
     self.navigationController.interactivePopGestureRecognizer.enabled=NO;[UIApplication sharedApplication].idleTimerDisabled=YES;
     EmClearFrame();em_reset_events();runtimeActive=YES;
-    NSString *bootstrap=[[NSBundle mainBundle] pathForResource:@"minijvm_rt" ofType:@"jar" inDirectory:@"Resources"],*emulator=[[NSBundle mainBundle] pathForResource:@"microemu-ios" ofType:@"jar" inDirectory:@"Resources"];
+    NSString *bootstrap=[[NSBundle mainBundle] pathForResource:@"minijvm_rt" ofType:@"jar" inDirectory:@"Runtime"],*emulator=[[NSBundle mainBundle] pathForResource:@"microemu-ios" ofType:@"jar" inDirectory:@"Runtime"];
     NSURL *documents=[gamesDirectory() URLByDeletingLastPathComponent];NSString *rms=[[documents URLByAppendingPathComponent:@"RMS" isDirectory:YES] path];
     NSString *log=[[documents URLByAppendingPathComponent:@"microemu.log"] path];NSString *jar=self.jar.path;
     __weak GameController *weakSelf=self;

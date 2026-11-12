@@ -41,7 +41,7 @@ def main(executable, javac):
         root = Path(temp)
         classes = root / "classes"
         classes.mkdir()
-        resources = IOS / "Resources"
+        resources = IOS / "Runtime"
         subprocess.run([javac, "-source", "8", "-target", "8", "-encoding", "UTF-8",
                         "-bootclasspath", str(resources / "minijvm_rt.jar"), "-cp", str(resources / "microemu-ios.jar"),
                         "-d", str(classes), str(IOS / "tests/java/org/microemu/ios/SmokeMIDlet.java")], check=True)

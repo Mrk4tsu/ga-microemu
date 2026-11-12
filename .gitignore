@@ -1,7 +1,7 @@
 /ios/.deps/
 /ios/build/
-/ios/Resources/*.jar
-/ios/Resources/ThirdParty/
+/ios/Runtime/*.jar
+/ios/Runtime/ThirdParty/
 /ios/MicroEmu.xcodeproj/
 /ios/MicroEmu.xcworkspace/
 __pycache__/

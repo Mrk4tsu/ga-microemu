@@ -27,15 +27,15 @@ class PackagingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             app = self.fixture(root)
-            (app / "Resources").mkdir()
-            (app / "Resources/minijvm_rt.jar").write_bytes(b"jar")
+            (app / "Runtime").mkdir()
+            (app / "Runtime/minijvm_rt.jar").write_bytes(b"jar")
             packaging.package(app, root / "app.ipa")
             with zipfile.ZipFile(root / "app.ipa") as archive:
                 binary = archive.getinfo("Payload/MicroEmu.app/MicroEmu")
                 self.assertTrue(binary.external_attr >> 16 & stat.S_IXUSR)
                 self.assertIn("Payload/", archive.namelist())
                 self.assertIn("Payload/MicroEmu.app/", archive.namelist())
-                self.assertIn("Payload/MicroEmu.app/Resources/", archive.namelist())
+                self.assertIn("Payload/MicroEmu.app/Runtime/", archive.namelist())
                 self.assertTrue(stat.S_ISDIR(archive.getinfo("Payload/").external_attr >> 16))
                 self.assertIn("Payload/MicroEmu.app/Info.plist", archive.namelist())
 
