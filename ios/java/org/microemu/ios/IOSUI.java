@@ -41,14 +41,20 @@ final class IOSUI implements UIFactory {
         public void delete(int offset, int length) { text = text.substring(0, offset) + text.substring(offset + length); }
         public void showNotify() {
             TextBox box = (TextBox)owner;
-            NativeBridge.modal(box.getTitle(), text, box.getMaxSize(), box.getConstraints(), labels());
+            String title = box.getTitle();
+            String current = box.getString();
+            setString(current);
+            NativeBridge.modal(title == null ? "" : title, current == null ? "" : current, box.getMaxSize(), box.getConstraints(), labels());
         }
     }
     static final class AlertView extends Base implements AlertUI {
         private String text = "";
         AlertView(Alert owner) { super(owner); }
         public void setString(String text) { this.text = text; }
-        public void showNotify() { NativeBridge.modal(owner.getTitle(), text, 0, 0, labels()); }
+        public void showNotify() {
+            String title = owner.getTitle();
+            NativeBridge.modal(title == null ? "" : title, text == null ? "" : text, 0, 0, labels());
+        }
     }
     static boolean softKey(DisplayAccess display, int index) {
         Displayable owner = display.getCurrent();
@@ -62,7 +68,19 @@ final class IOSUI implements UIFactory {
         Displayable owner = display.getCurrent();
         if (owner == null) return;
         Base ui = (Base)display.getDisplayableUI(owner);
-        if (ui instanceof TextView && text != null) ((TextView)ui).setString(text);
+        if (owner instanceof TextBox && text != null) {
+            TextBox box = (TextBox)owner;
+            int max = box.getMaxSize();
+            String value = max > 0 && text.length() > max ? text.substring(0, max) : text;
+            try {
+                box.setString(value);
+            } catch (IllegalArgumentException ignored) {
+                // Keep Cancel/Back responsive even if input constraints fail.
+            }
+            if (ui instanceof TextView) ((TextView)ui).setString(value);
+        } else if (ui instanceof TextView && text != null) {
+            ((TextView)ui).setString(text);
+        }
         if (index >= 0 && index < ui.commands.size())
             display.commandAction(((CommandUI)ui.commands.elementAt(index)).getCommand(), owner);
     }

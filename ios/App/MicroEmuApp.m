@@ -251,7 +251,10 @@ static NSURL *gamesDirectory(void) {
     self.keyboardField.spellCheckingType=UITextSpellCheckingTypeNo;self.keyboardField.returnKeyType=UIReturnKeySend;
     [self.keyboardField addTarget:self action:@selector(keyboardTextChanged) forControlEvents:UIControlEventEditingChanged];
     __weak GameController *weakSelf=self;
-    self.keyboardField.onEmptyBackspace=^{GameController *s=weakSelf;if(!s || s.finished || s.stopping)return;em_event(1,-8,0,0,NULL);em_event(2,-8,0,0,NULL);};
+    self.keyboardField.onEmptyBackspace=^{GameController *s=weakSelf;if(!s || s.finished || s.stopping)return;em_event(13,-8,0,0,NULL);};
+    UIButton *leftKey=[UIButton buttonWithType:UIButtonTypeSystem];[leftKey setTitle:@"L" forState:UIControlStateNormal];
+    leftKey.titleLabel.font=[UIFont systemFontOfSize:15 weight:UIFontWeightSemibold];leftKey.backgroundColor=[UIColor colorWithWhite:0.24 alpha:1];leftKey.tintColor=UIColor.whiteColor;leftKey.layer.cornerRadius=8;
+    [leftKey addTarget:self action:@selector(keyboardSendLeft) forControlEvents:UIControlEventTouchUpInside];
     UIButton *send=[UIButton buttonWithType:UIButtonTypeSystem];[send setTitle:@"↵" forState:UIControlStateNormal];
     send.titleLabel.font=[UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];send.backgroundColor=UIColor.systemBlueColor;send.tintColor=UIColor.whiteColor;send.layer.cornerRadius=8;
     [send addTarget:self action:@selector(keyboardSendReturn) forControlEvents:UIControlEventTouchUpInside];
@@ -259,31 +262,39 @@ static NSURL *gamesDirectory(void) {
     done.titleLabel.font=[UIFont systemFontOfSize:14 weight:UIFontWeightSemibold];done.backgroundColor=[UIColor colorWithWhite:0.24 alpha:1];done.tintColor=UIColor.whiteColor;done.layer.cornerRadius=8;
     [done addTarget:self action:@selector(hideKeyboard) forControlEvents:UIControlEventTouchUpInside];
     [self.inputBar addSubview:line];
-    for(UIView *v in @[self.keyboardField,send,done]){v.translatesAutoresizingMaskIntoConstraints=NO;[self.inputBar addSubview:v];}
+    for(UIView *v in @[self.keyboardField,leftKey,send,done]){v.translatesAutoresizingMaskIntoConstraints=NO;[self.inputBar addSubview:v];}
     [NSLayoutConstraint activateConstraints:@[
         [line.topAnchor constraintEqualToAnchor:self.inputBar.topAnchor],[line.leadingAnchor constraintEqualToAnchor:self.inputBar.leadingAnchor],[line.trailingAnchor constraintEqualToAnchor:self.inputBar.trailingAnchor],[line.heightAnchor constraintEqualToConstant:0.5],
         [self.keyboardField.leadingAnchor constraintEqualToAnchor:self.inputBar.leadingAnchor constant:8],[self.keyboardField.centerYAnchor constraintEqualToAnchor:self.inputBar.centerYAnchor],[self.keyboardField.heightAnchor constraintEqualToConstant:34],
-        [send.leadingAnchor constraintEqualToAnchor:self.keyboardField.trailingAnchor constant:6],[send.centerYAnchor constraintEqualToAnchor:self.inputBar.centerYAnchor],[send.widthAnchor constraintEqualToConstant:40],[send.heightAnchor constraintEqualToConstant:34],
-        [done.leadingAnchor constraintEqualToAnchor:send.trailingAnchor constant:6],[done.trailingAnchor constraintEqualToAnchor:self.inputBar.trailingAnchor constant:-8],[done.centerYAnchor constraintEqualToAnchor:self.inputBar.centerYAnchor],[done.widthAnchor constraintEqualToConstant:54],[done.heightAnchor constraintEqualToConstant:34]]];
+        [leftKey.leadingAnchor constraintEqualToAnchor:self.keyboardField.trailingAnchor constant:6],[leftKey.centerYAnchor constraintEqualToAnchor:self.inputBar.centerYAnchor],[leftKey.widthAnchor constraintEqualToConstant:36],[leftKey.heightAnchor constraintEqualToConstant:34],
+        [send.leadingAnchor constraintEqualToAnchor:leftKey.trailingAnchor constant:6],[send.centerYAnchor constraintEqualToAnchor:self.inputBar.centerYAnchor],[send.widthAnchor constraintEqualToConstant:40],[send.heightAnchor constraintEqualToConstant:34],
+        [done.leadingAnchor constraintEqualToAnchor:send.trailingAnchor constant:6],[done.trailingAnchor constraintEqualToAnchor:self.inputBar.trailingAnchor constant:-8],[done.centerYAnchor constraintEqualToAnchor:self.inputBar.centerYAnchor],[done.widthAnchor constraintEqualToConstant:52],[done.heightAnchor constraintEqualToConstant:34]]];
 }
 - (void)keyboardTextChanged {
-    if(self.finished || self.stopping || self.keyboardField.markedTextRange)return;
+    if(self.finished || self.stopping)return;
     NSString *current=self.keyboardField.text?:@"";
     NSString *previous=self.lastSentText?:@"";
     if([current isEqualToString:previous])return;
     NSUInteger common=0,limit=MIN(previous.length,current.length);
     while(common<limit && [previous characterAtIndex:common]==[current characterAtIndex:common])common++;
     NSUInteger deletes=previous.length-common;
-    for(NSUInteger i=0;i<deletes;i++){em_event(1,-8,0,0,NULL);em_event(2,-8,0,0,NULL);}
+    for(NSUInteger i=0;i<deletes;i++)em_event(13,-8,0,0,NULL);
     NSString *added=[current substringFromIndex:common];
     if(added.length>0)em_event(12,0,0,0,added.UTF8String);
     self.lastSentText=[current copy];
+}
+- (void)keyboardSendLeft {
+    if(self.finished || self.stopping)return;
+    [self.keyboardField unmarkText];
+    [self keyboardTextChanged];
+    em_event(13,-6,0,0,NULL);
+    self.keyboardField.text=@"";self.lastSentText=@"";
 }
 - (void)keyboardSendReturn {
     if(self.finished || self.stopping)return;
     [self.keyboardField unmarkText];
     [self keyboardTextChanged];
-    em_event(1,-5,0,0,NULL);em_event(2,-5,0,0,NULL);
+    em_event(13,-5,0,0,NULL);
     self.keyboardField.text=@"";self.lastSentText=@"";
 }
 - (void)hideKeyboard {
@@ -309,17 +320,26 @@ static NSURL *gamesDirectory(void) {
     if(info[@"title"]==NSNull.null){[self.textModal dismissViewControllerAnimated:NO completion:nil];self.textModal=nil;return;}
     if(self.finished || self.stopping)return;
     [self hideKeyboard];
-    [self.textModal dismissViewControllerAnimated:NO completion:nil];
-    UIAlertController *alert=[UIAlertController alertControllerWithTitle:info[@"title"] message:[info[@"max"] intValue]>0?nil:info[@"value"] preferredStyle:UIAlertControllerStyleAlert];
-    self.textModal=alert;self.maxTextLength=[info[@"max"] integerValue];int constraints=[info[@"constraints"] intValue];
+    NSString *title=[info[@"title"] length]?info[@"title"]:nil;
+    UIAlertController *alert=[UIAlertController alertControllerWithTitle:title message:[info[@"max"] intValue]>0?nil:info[@"value"] preferredStyle:UIAlertControllerStyleAlert];
+    self.maxTextLength=[info[@"max"] integerValue];int constraints=[info[@"constraints"] intValue];
     if(self.maxTextLength>0)[alert addTextFieldWithConfigurationHandler:^(UITextField*field){field.text=info[@"value"];field.delegate=self;field.secureTextEntry=(constraints&0x10000)!=0;
         int type=constraints&0xffff;field.keyboardType=type==2?UIKeyboardTypeNumberPad:type==3?UIKeyboardTypePhonePad:type==5?UIKeyboardTypeDecimalPad:type==1?UIKeyboardTypeEmailAddress:UIKeyboardTypeDefault;
         field.autocorrectionType=UITextAutocorrectionTypeNo;field.autocapitalizationType=UITextAutocapitalizationTypeNone;}];
     NSArray *commands=info[@"commands"];if(!commands.count)commands=@[@"Done"];
+    __weak UIAlertController *weakAlert=alert;__weak GameController *weakSelf=self;
     for(NSUInteger i=0;i<commands.count;i++){
-        [alert addAction:[UIAlertAction actionWithTitle:commands[i] style:UIAlertActionStyleDefault handler:^(UIAlertAction*a){NSString *value=alert.textFields.firstObject.text?:@"";em_event(7,(int)i,0,0,value.UTF8String);self.textModal=nil;}]];
+        [alert addAction:[UIAlertAction actionWithTitle:commands[i] style:UIAlertActionStyleDefault handler:^(UIAlertAction*a){
+            NSString *value=weakAlert.textFields.firstObject.text?:@"";
+            em_event(7,(int)i,0,0,value.UTF8String);
+            if(weakSelf)weakSelf.textModal=nil;
+        }]];
     }
-    [self presentViewController:alert animated:YES completion:nil];
+    UIViewController *previous=self.textModal?:self.presentedViewController;
+    self.textModal=alert;
+    void (^presentAlert)(void)=^{if(!weakSelf.finished && !weakSelf.stopping && weakSelf.textModal==alert)[weakSelf presentViewController:alert animated:YES completion:nil];};
+    if(previous)[previous dismissViewControllerAnimated:NO completion:presentAlert];
+    else presentAlert();
 }
 - (BOOL)textField:(UITextField*)field shouldChangeCharactersInRange:(NSRange)range replacementString:(NSString*)replacement {
     if(field==self.keyboardField)return YES;

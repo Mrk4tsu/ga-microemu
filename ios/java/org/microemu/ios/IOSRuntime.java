@@ -115,10 +115,21 @@ public final class IOSRuntime implements MicroEmulator {
             case 7: IOSUI.commit(display, event[1], NativeBridge.takeText()); break;
             case 12:
                 String text = NativeBridge.takeText();
-                System.out.println("[INPUT] Text length=" + (text == null ? -1 : text.length()));
+                Displayable target = display.getCurrent();
+                System.out.println("[INPUT] Text length=" + (text == null ? -1 : text.length()) + " screen=" + (target == null ? "null" : target.getClass().getName()));
                 if (text != null) for (int i = 0; i < text.length(); i++) {
-                    display.keyPressed(text.charAt(i)); display.keyReleased(text.charAt(i));
+                    display.keyPressed(text.charAt(i));
+                    Thread.sleep(20);
+                    display.keyReleased(text.charAt(i));
+                    Thread.sleep(10);
                 }
+                break;
+            case 13:
+                if ((event[1] == -6 || event[1] == -7) && IOSUI.softKey(display, event[1] == -6 ? 0 : 1)) break;
+                display.keyPressed(event[1]);
+                Thread.sleep(40);
+                display.keyReleased(event[1]);
+                Thread.sleep(10);
                 break;
         }
     }
