@@ -159,7 +159,7 @@ static NSURL *gamesDirectory(void) {
 - (void)viewDidLoad {
     [super viewDidLoad];self.title=@"MicroEmu";self.navigationItem.largeTitleDisplayMode=UINavigationItemLargeTitleDisplayModeAlways;
     self.navigationItem.rightBarButtonItem=[[UIBarButtonItem alloc] initWithTitle:@"Import JAR" style:UIBarButtonItemStylePlain target:self action:@selector(importJar)];
-    self.tableView.backgroundColor=UIColor.systemGroupedBackground;
+    self.tableView.backgroundColor=UIColor.systemGroupedBackgroundColor;
 }
 - (void)viewWillAppear:(BOOL)animated {[super viewWillAppear:animated];self.games=[[[NSFileManager defaultManager] contentsOfDirectoryAtURL:gamesDirectory() includingPropertiesForKeys:nil options:NSDirectoryEnumerationSkipsHiddenFiles error:nil] filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSURL*url,NSDictionary*bindings){return [url.pathExtension.lowercaseString isEqualToString:@"jar"];}]];self.games=[self.games sortedArrayUsingComparator:^NSComparisonResult(NSURL*a,NSURL*b){return [a.lastPathComponent localizedCaseInsensitiveCompare:b.lastPathComponent];}];[self.tableView reloadData];}
 - (NSInteger)tableView:(UITableView*)tableView numberOfRowsInSection:(NSInteger)section {return self.games.count;}
