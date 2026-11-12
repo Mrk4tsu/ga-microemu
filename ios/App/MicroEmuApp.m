@@ -413,7 +413,7 @@ static UIImage *emIconFromJar(NSURL *jarURL, NSString **outSuiteName) {
             [weakSelf switchToTab:targetId];
         }]];
     }
-    [sheet addAction:[UIAlertAction actionWithTitle:@"Huỷ" style:UIAlertActionStyleCancel handler:nil]];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
     sheet.popoverPresentationController.sourceView=self.tabSelector;
     sheet.popoverPresentationController.sourceRect=self.tabSelector.bounds;
     [self presentViewController:sheet animated:YES completion:nil];
@@ -537,17 +537,17 @@ static UIImage *emIconFromJar(NSURL *jarURL, NSString **outSuiteName) {
 - (void)newTab {
     if(self.closingHost || self.hostFinished || self.presentedViewController)return;
     NSURL *currentJar=[self activeTab].jar?:self.jar;
-    UIAlertController *sheet=[UIAlertController alertControllerWithTitle:@"New tab" message:@"Chọn game để mở ở tab mới" preferredStyle:UIAlertControllerStyleActionSheet];
+    UIAlertController *sheet=[UIAlertController alertControllerWithTitle:@"New tab" message:@"Choose a game to open in a new tab" preferredStyle:UIAlertControllerStyleActionSheet];
     __weak GameController *weakSelf=self;
     if(currentJar){
         [sheet addAction:[UIAlertAction actionWithTitle:currentJar.lastPathComponent style:UIAlertActionStyleDefault handler:^(UIAlertAction*a){
             [weakSelf openNewTabWithJar:currentJar];
         }]];
     }
-    [sheet addAction:[UIAlertAction actionWithTitle:@"Chọn danh sách" style:UIAlertActionStyleDefault handler:^(UIAlertAction*a){
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Choose from list" style:UIAlertActionStyleDefault handler:^(UIAlertAction*a){
         [weakSelf presentJarListPicker];
     }]];
-    [sheet addAction:[UIAlertAction actionWithTitle:@"Huỷ" style:UIAlertActionStyleCancel handler:nil]];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
     sheet.popoverPresentationController.barButtonItem=self.addTabItem;
     [self presentViewController:sheet animated:YES completion:nil];
 }
@@ -616,7 +616,7 @@ static UIImage *emIconFromJar(NSURL *jarURL, NSString **outSuiteName) {
     self.keyboardField.backgroundColor=[UIColor colorWithWhite:0.18 alpha:1];self.keyboardField.textColor=UIColor.whiteColor;
     self.keyboardField.font=[UIFont systemFontOfSize:15];self.keyboardField.layer.cornerRadius=8;
     self.keyboardField.leftView=[[UIView alloc] initWithFrame:CGRectMake(0,0,10,1)];self.keyboardField.leftViewMode=UITextFieldViewModeAlways;
-    self.keyboardField.attributedPlaceholder=[[NSAttributedString alloc] initWithString:@"Nhập văn bản gửi vào game…" attributes:@{NSForegroundColorAttributeName:emSecondaryLabelColor()}];
+    self.keyboardField.attributedPlaceholder=[[NSAttributedString alloc] initWithString:@"Type text for game…" attributes:@{NSForegroundColorAttributeName:emSecondaryLabelColor()}];
     self.keyboardField.autocorrectionType=UITextAutocorrectionTypeNo;self.keyboardField.autocapitalizationType=UITextAutocapitalizationTypeNone;
     self.keyboardField.spellCheckingType=UITextSpellCheckingTypeNo;self.keyboardField.returnKeyType=UIReturnKeySend;
     [self.keyboardField addTarget:self action:@selector(keyboardTextChanged) forControlEvents:UIControlEventEditingChanged];
@@ -632,7 +632,7 @@ static UIImage *emIconFromJar(NSURL *jarURL, NSString **outSuiteName) {
     UIButton *send=[UIButton buttonWithType:UIButtonTypeSystem];[send setTitle:@"↵" forState:UIControlStateNormal];
     send.titleLabel.font=[UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];send.backgroundColor=UIColor.systemBlueColor;send.tintColor=UIColor.whiteColor;send.layer.cornerRadius=8;
     [send addTarget:self action:@selector(keyboardSendReturn) forControlEvents:UIControlEventTouchUpInside];
-    UIButton *done=[UIButton buttonWithType:UIButtonTypeSystem];[done setTitle:@"Xong" forState:UIControlStateNormal];
+    UIButton *done=[UIButton buttonWithType:UIButtonTypeSystem];[done setTitle:@"Done" forState:UIControlStateNormal];
     done.titleLabel.font=[UIFont systemFontOfSize:14 weight:UIFontWeightSemibold];done.backgroundColor=[UIColor colorWithWhite:0.24 alpha:1];done.tintColor=UIColor.whiteColor;done.layer.cornerRadius=8;
     [done addTarget:self action:@selector(hideKeyboard) forControlEvents:UIControlEventTouchUpInside];
     [self.inputBar addSubview:line];
@@ -840,10 +840,10 @@ static UIImage *emIconFromJar(NSURL *jarURL, NSString **outSuiteName) {
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.icons=[NSMutableDictionary new];self.subtitles=[NSMutableDictionary new];
-    self.title=self.onPickJar?@"Chọn danh sách":@"GaEmulator";
+    self.title=self.onPickJar?@"Choose JAR":@"GaEmulator";
     self.navigationItem.largeTitleDisplayMode=self.onPickJar?UINavigationItemLargeTitleDisplayModeNever:UINavigationItemLargeTitleDisplayModeAlways;
     if(self.onPickJar){
-        self.navigationItem.leftBarButtonItem=[[UIBarButtonItem alloc] initWithTitle:@"Huỷ" style:UIBarButtonItemStylePlain target:self action:@selector(cancelPicker)];
+        self.navigationItem.leftBarButtonItem=[[UIBarButtonItem alloc] initWithTitle:@"Cancel" style:UIBarButtonItemStylePlain target:self action:@selector(cancelPicker)];
     }else{
         self.navigationItem.leftBarButtonItem=self.editButtonItem;
     }
@@ -867,7 +867,7 @@ static UIImage *emIconFromJar(NSURL *jarURL, NSString **outSuiteName) {
         if(suite)self.subtitles[key]=suite;
     }
     cell.textLabel.text=jar.lastPathComponent;
-    cell.detailTextLabel.text=self.onPickJar?@"Mở ở tab mới":(suite.length?[NSString stringWithFormat:@"%@ · Java ME",suite]:@"Java ME · Full Screen");
+    cell.detailTextLabel.text=self.onPickJar?@"Open in new tab":(suite.length?[NSString stringWithFormat:@"%@ · Java ME",suite]:@"Java ME · Full Screen");
     cell.imageView.image=icon;
     cell.imageView.contentMode=UIViewContentModeScaleAspectFit;
     cell.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
@@ -884,7 +884,7 @@ static UIImage *emIconFromJar(NSURL *jarURL, NSString **outSuiteName) {
     NSURL *target=self.games[indexPath.row];
     NSError *error=nil;
     if(![[NSFileManager defaultManager] removeItemAtURL:target error:&error]){
-        UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"Xoá thất bại" message:error.localizedDescription preferredStyle:UIAlertControllerStyleAlert];
+        UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"Delete failed" message:error.localizedDescription preferredStyle:UIAlertControllerStyleAlert];
         [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
         [self presentViewController:alert animated:YES completion:nil];
         return;
@@ -897,8 +897,8 @@ static UIImage *emIconFromJar(NSURL *jarURL, NSString **outSuiteName) {
     [tableView reloadSections:[NSIndexSet indexSetWithIndex:0] withRowAnimation:UITableViewRowAnimationNone];
 }
 - (NSString*)tableView:(UITableView*)tableView titleForFooterInSection:(NSInteger)section {
-    if(self.onPickJar)return self.games.count?@"Chọn game để mở trong tab mới.":@"Chưa có file JAR nào. Nhấn Import JAR để thêm.";
-    return self.games.count?@"Chạm để chạy game. Vuốt sang trái hoặc bấm Edit để xoá JAR.":@"Import a MIDP JAR from Files to get started. Games run locally on your iPhone.";
+    if(self.onPickJar)return self.games.count?@"Tap a game to open it in a new tab.":@"No JAR files yet. Tap Import JAR to add one.";
+    return self.games.count?@"Tap a game to run it. Swipe left or tap Edit to remove a JAR.":@"Import a MIDP JAR from Files to get started. Games run locally on your iPhone.";
 }
 - (void)tableView:(UITableView*)tableView didSelectRowAtIndexPath:(NSIndexPath*)index {
     if(self.onPickJar){
