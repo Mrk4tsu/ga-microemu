@@ -99,3 +99,29 @@ miniJVM được pin tại `76f904ea4008a8058db5155bf5ee2cfe94d19e60`. `prepare_
 `build_java.py` giữ bản CLDC networking của miniJVM, tránh đóng gói trùng `javax.microedition.io`; một overlay nguồn thay bốn phép `Calendar.add(DAY_OF_MONTH, …)` trong DateField bằng `set/get` vì bootstrap Calendar chỉ có API CLDC. Các module desktop của MicroEmulator giữ nguyên.
 
 MicroEmulator giữ nguyên thông tin tác giả và giấy phép có trong repo. Bootstrap Java của miniJVM gồm MIT và GPLv2 với Classpath exception; thư viện native có các giấy phép kèm nguồn. Bản build sao chép notice vào `Runtime/ThirdParty` trong app. Các thay đổi mới trong `ios/` được cung cấp theo Apache-2.0.
+
+
+## Tương thích JAR và mở từ ứng dụng khác
+
+Bản sửa tương thích bổ sung:
+
+- Chuẩn hóa lời gọi `invokevirtual` tới phương thức private của chính class, thường gặp trong JAR đã làm rối mã. Chỉ sửa bytecode trong bộ nhớ; không nới kiểm tra truy cập của JVM hay ghi lại JAR.
+- Tìm MIDlet qua chuỗi kế thừa khi JAR thiếu manifest, bỏ qua class abstract/interface.
+- Giữ vùng vẽ nội bộ độc lập với game override `getWidth()/getHeight()`.
+- Với JAR chỉ có thư mục tài nguyên `x1/`, giữ tỉ lệ màn hình và giới hạn vùng vẽ logic trong 153.600 pixel. Cách này còn giữ nguyên đường giải mã ảnh riêng của game. UIKit phóng framebuffer lên màn hình và dùng kích thước thật đó để đổi tọa độ chạm.
+- Khi một ảnh chuẩn ở `x2/`, `x3/` hoặc `x4/` bị thiếu nhưng có bản ở mật độ khác, có thể đổi tỉ lệ bằng nearest-neighbor, giữ alpha.
+
+Đã kiểm tra khởi động trên host Windows với `HaiTacTiHon_124.jar`, `Dragonboy250 v6.0.jar`, `DragonBoy252.jar`, gồm đường chạy nhiều tab dùng trên iOS. Bản 250 trước đó lỗi `IllegalAccessError`; bản 252 thiếu manifest và thiếu bộ ảnh x2 khi dùng viewport dọc. Sau sửa, cả ba lên hình; hai bản Dragonboy có kết nối TCP thành công trong lần thử. Chưa xác nhận đăng nhập/chơi đầy đủ hoặc chạy bản sửa trên iPhone.
+
+Một số phiên thử game thật giữ kết nối khiến bước dừng toàn bộ JVM vượt thời gian chờ của harness. Đây không phải kết quả kiểm thử dừng thành công; việc đóng phiên online cần tiếp tục kiểm tra trên thiết bị.
+
+Sau khi cài cập nhật IPA, có thể chọn JAR trong Files hoặc dùng **Share/Open in → GaEmulator** từ trình duyệt. App sao chép file vào thư viện rồi mở game; nếu đang chơi thì mở tab mới, hoặc chuyển về tab đang chạy cùng file. File đã có cùng nội dung được dùng lại; file trùng tên nhưng khác nội dung được lưu riêng. Luồng này xử lý cả khi app chưa chạy và khi đang mở.
+
+Kiểm tra trên iPhone sau build:
+
+1. Mở một JAR từ Files khi GaEmulator đã đóng.
+2. Mở JAR khác khi một game đang chạy; game hiện tại vẫn còn trong tab cũ.
+3. Mở lại cùng file, rồi thử một file khác nội dung nhưng trùng tên.
+4. Thử JAR trong iCloud Drive và một file rỗng/không đọc được; phải báo lỗi thay vì mở một game rỗng.
+
+Smoke test hiện có fixture cho lời gọi private, tableswitch/lookupswitch, Canvas override kích thước, ảnh đổi mật độ có alpha, MIDlet kế thừa không manifest, cùng các bài RMS/TCP/HTTP. Các trường hợp chạy một tab, nhiều tab và runtime mã hóa đều được kiểm tra.

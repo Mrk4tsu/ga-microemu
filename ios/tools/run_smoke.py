@@ -36,6 +36,16 @@ class Handler(socketserver.BaseRequestHandler):
                 self.request.sendall(data)
 
 
+def density_fixture():
+    import struct
+    import zlib
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xffffffff)
+    pixels = bytes([255,0,0,255, 0,255,0,128, 0,0,255,255, 255,255,0,255, 255,0,255,255, 0,255,255,255])
+    rows = b"".join(b"\0" + pixels[y*8:(y+1)*8] for y in range(3))
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">2I5B", 2, 3, 8, 6, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b"")
+
+
 def main(executable, javac):
     with socketserver.ThreadingTCPServer(("127.0.0.1", 0), Handler) as server, tempfile.TemporaryDirectory(prefix="microemu-smoke-") as temp:
         server.daemon_threads = True
@@ -45,13 +55,17 @@ def main(executable, javac):
         classes = root / "classes"
         classes.mkdir()
         resources = IOS / "Runtime"
+        subprocess.run([javac, "--release", "11", "-d", str(classes),
+                        str(IOS / "tests/java/legacy/LegacyCalls.java")], check=True)
         subprocess.run([javac, "-source", "8", "-target", "8", "-encoding", "UTF-8",
-                        "-bootclasspath", str(resources / "minijvm_rt.jar"), "-cp", str(resources / "microemu-ios.jar"),
-                        "-d", str(classes), str(IOS / "tests/java/org/microemu/ios/SmokeMIDlet.java")], check=True)
+                        "-bootclasspath", str(resources / "minijvm_rt.jar"), "-cp", str(resources / "microemu-ios.jar") + os.pathsep + str(classes),
+                        "-d", str(classes), str(IOS / "tests/java/org/microemu/ios/SmokeMIDlet.java"),
+                        str(IOS / "tests/java/compat/InheritedMIDlet.java")], check=True)
         game = root / "smoke.jar"
         with zipfile.ZipFile(game, "w", zipfile.ZIP_DEFLATED) as jar:
             for file in classes.rglob("*.class"):
                 jar.write(file, file.relative_to(classes).as_posix())
+            jar.writestr("x1/compat.png", density_fixture())
             jar.writestr("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\r\nMIDlet-Name: Smoke\r\nMIDlet-Vendor: MicroEmu\r\nMIDlet-1: Smoke,,org.microemu.ios.SmokeMIDlet\r\nTest-Port: %d\r\n\r\n" % server.server_address[1])
         environment = os.environ.copy()
         environment["MICROEMU_TEST_REPEATS"] = "2"
@@ -86,6 +100,23 @@ def main(executable, javac):
                                    text=True, encoding="utf-8", errors="replace", capture_output=True, timeout=45, env=multi_env)
         print(enc_multi.stdout)
         print(enc_multi.stderr)
+
+        # A concrete MIDlet may inherit through a class supplied in the JAR.
+        automatic = root / "automatic.jar"
+        with zipfile.ZipFile(game) as original, zipfile.ZipFile(automatic, "w", zipfile.ZIP_DEFLATED) as archive:
+            for name in original.namelist():
+                if name.upper() != "META-INF/MANIFEST.MF":
+                    archive.writestr(name, original.read(name))
+        auto_env = environment.copy()
+        auto_env["MICROEMU_TEST_REPEATS"] = "1"
+        auto = subprocess.run([str(executable), str(resources / "minijvm_rt.jar"), str(resources / "microemu-ios.jar"),
+                               str(automatic), str(root / "rms-auto"), "10"],
+                              text=True, encoding="utf-8", errors="replace", capture_output=True, timeout=45, env=auto_env)
+        print(auto.stdout)
+        print(auto.stderr)
+        if auto.returncode or auto.stdout.count("SMOKE_PASS:") != 1 or "SMOKE_FAIL:" in auto.stdout + auto.stderr:
+            raise SystemExit("Manifest-free inherited MIDlet test failed")
+
         server.shutdown()
         if enc_multi.returncode or enc_multi.stdout.count("SMOKE_PASS:") != 2 or "SMOKE_FAIL:" in enc_multi.stdout + enc_multi.stderr:
             raise SystemExit("Encrypted runtime multi-tab smoke test failed")

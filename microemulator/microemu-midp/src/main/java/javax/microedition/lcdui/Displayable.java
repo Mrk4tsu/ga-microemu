@@ -87,25 +87,20 @@ public abstract class Displayable
 	}
     
     
-    public int getWidth()
-    {
-    	if (width == -1) {
-    		updateWidthAndHeight();
-    	}
-    	
-    	return width;
+    public int getWidth() { return getPaintWidth(); }
+
+    public int getHeight() { return getPaintHeight(); }
+
+    // Emulator repaint bounds must not dispatch to a game override of getWidth/getHeight.
+    final int getPaintWidth() {
+        if (width == -1) updateWidthAndHeight();
+        return width;
     }
 
-
-    public int getHeight()
-    {
-    	if (height == -1) {
-    		updateWidthAndHeight();
-    	}
-    	
-    	return height;
+    final int getPaintHeight() {
+        if (height == -1) updateWidthAndHeight();
+        return height;
     }
-
 
 	public boolean isShown()
 	{
@@ -221,7 +216,7 @@ public abstract class Displayable
 	void repaint()
 	{
 		if (currentDisplay != null) {
-			repaint(0, 0, getWidth(), getHeight());
+			repaint(0, 0, getPaintWidth(), getPaintHeight());
 		}
 	}
 
@@ -256,7 +251,7 @@ public abstract class Displayable
         viewPortY = 0;
         // TODO remove this StringComponent object when native UI is completed
         StringComponent title = new StringComponent(getTitle());
-        viewPortHeight = getHeight() - title.getHeight() - 1;
+        viewPortHeight = getPaintHeight() - title.getHeight() - 1;
         if (ticker != null) {
         		viewPortHeight -= this.ticker.getHeight();
         }

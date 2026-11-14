@@ -8,6 +8,7 @@
 #include <stdio.h>
 
 static BOOL runtimeActive;
+static NSString *const EmJarHostReadyNotification=@"GaEmulatorHostReady";
 static void EmComputeVirtualSize(CGSize size, int *outWidth, int *outHeight) {
     if (size.width <= 0 || size.height <= 0) {
         *outWidth = 480;
@@ -32,6 +33,53 @@ static NSURL *gamesDirectory(void) {
     NSURL *games=[documents URLByAppendingPathComponent:@"Games" isDirectory:YES];
     [[NSFileManager defaultManager] createDirectoryAtURL:games withIntermediateDirectories:YES attributes:nil error:nil];return games;
 }
+
+static void EmImportError(NSError **error, NSString *message) {
+    if(error)*error=[NSError errorWithDomain:@"GaEmulator.JAR" code:1 userInfo:@{NSLocalizedDescriptionKey:message}];
+}
+static NSURL *EmImportJarURL(NSURL *source, NSError **error) {
+    if(!source.isFileURL || ![source.pathExtension.lowercaseString isEqualToString:@"jar"]){
+        EmImportError(error,@"Choose a Java ME .jar file.");return nil;
+    }
+    BOOL scoped=[source startAccessingSecurityScopedResource];
+    __block NSURL *result=nil;
+    __block NSError *copyError=nil;
+    NSError *coordinationError=nil;
+    NSFileCoordinator *coordinator=[[NSFileCoordinator alloc] initWithFilePresenter:nil];
+    [coordinator coordinateReadingItemAtURL:source options:NSFileCoordinatorReadingWithoutChanges error:&coordinationError byAccessor:^(NSURL *readURL){
+        NSFileManager *manager=[NSFileManager defaultManager];
+        NSDictionary *attributes=[manager attributesOfItemAtPath:readURL.path error:&copyError];
+        if(!attributes)return;
+        if(![attributes[NSFileType] isEqualToString:NSFileTypeRegular] || [attributes[NSFileSize] unsignedLongLongValue]==0){
+            EmImportError(&copyError,@"The JAR file is empty or is not a regular file.");return;
+        }
+        NSURL *target=[gamesDirectory() URLByAppendingPathComponent:source.lastPathComponent];
+        if([readURL.URLByResolvingSymlinksInPath.URLByStandardizingPath isEqual:target.URLByResolvingSymlinksInPath.URLByStandardizingPath]
+           || ([manager fileExistsAtPath:target.path] && [manager contentsEqualAtPath:readURL.path andPath:target.path])){
+            result=target;return;
+        }
+        if([manager fileExistsAtPath:target.path]){
+            NSString *name=[NSString stringWithFormat:@"%@-%@.jar",source.lastPathComponent.stringByDeletingPathExtension,NSUUID.UUID.UUIDString];
+            target=[gamesDirectory() URLByAppendingPathComponent:name];
+        }
+        NSURL *temporary=[gamesDirectory() URLByAppendingPathComponent:[NSString stringWithFormat:@".import-%@.jar",NSUUID.UUID.UUIDString]];
+        if([manager copyItemAtURL:readURL toURL:temporary error:&copyError]
+           && [manager moveItemAtURL:temporary toURL:target error:&copyError])result=target;
+        if(!result)[manager removeItemAtURL:temporary error:nil];
+    }];
+    if(scoped)[source stopAccessingSecurityScopedResource];
+    if(!result && error)*error=copyError?:coordinationError?:[NSError errorWithDomain:@"GaEmulator.JAR" code:2 userInfo:@{NSLocalizedDescriptionKey:@"Could not read the JAR file."}];
+    return result;
+}
+static void EmImportJar(NSURL *source, void (^completion)(NSURL *, NSError *)) {
+    static dispatch_queue_t queue;static dispatch_once_t once;
+    dispatch_once(&once,^{queue=dispatch_queue_create("com.gamod.microemu.jar-import",DISPATCH_QUEUE_SERIAL);});
+    dispatch_async(queue,^{
+        NSError *error=nil;NSURL *target=EmImportJarURL(source,&error);
+        dispatch_async(dispatch_get_main_queue(),^{completion(target,error);});
+    });
+}
+
 static NSArray<NSURL*> *listGameJars(void) {
     NSArray<NSURL*> *items=[[[NSFileManager defaultManager] contentsOfDirectoryAtURL:gamesDirectory() includingPropertiesForKeys:nil options:NSDirectoryEnumerationSkipsHiddenFiles error:nil] filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSURL*url,NSDictionary*bindings){return [url.pathExtension.lowercaseString isEqualToString:@"jar"];}]];
     return [items sortedArrayUsingComparator:^NSComparisonResult(NSURL*a,NSURL*b){return [a.lastPathComponent localizedCaseInsensitiveCompare:b.lastPathComponent];}]?:@[];
@@ -307,6 +355,7 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
 @property(nonatomic,strong) NSMutableDictionary<NSString*,UIImage*> *icons;
 @property(nonatomic,strong) NSMutableDictionary<NSString*,NSString*> *subtitles;
 @property(nonatomic,copy) void (^onPickJar)(NSURL *jar);
+- (void)reloadGames;
 @end
 
 @interface GameController : UIViewController <UITextFieldDelegate>
@@ -340,6 +389,8 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
 @property(nonatomic,strong) NSLayoutConstraint *inputBarBottomConstraint;
 @property(nonatomic,strong) UILabel *metricsLabel;
 @property(nonatomic,strong) NSTimer *metricsTimer;
+- (BOOL)openExternalJar:(NSURL*)jarURL;
+- (void)close;
 @end
 
 @implementation GameController
@@ -603,6 +654,7 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
         }
     });
     [self openNewTabWithJar:self.jar];
+    [[NSNotificationCenter defaultCenter] postNotificationName:EmJarHostReadyNotification object:self];
 }
 - (void)cancelActiveInputs {
     [self hideKeyboard];
@@ -617,6 +669,18 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
     }
     if(self.textModal){[self.textModal dismissViewControllerAnimated:NO completion:nil];self.textModal=nil;}
 }
+
+- (BOOL)openExternalJar:(NSURL*)jarURL {
+    if(!jarURL || !self.hostStarted || self.closingHost || self.hostFinished)return NO;
+    [self cancelActiveInputs];
+    for(GameTab *tab in self.tabs){
+        if(!tab.finished && !tab.stopping && [tab.jar.URLByStandardizingPath isEqual:jarURL.URLByStandardizingPath]){
+            [self switchToTab:tab.tabId];return YES;
+        }
+    }
+    [self openNewTabWithJar:jarURL];return YES;
+}
+
 - (void)openNewTabWithJar:(NSURL*)jarURL {
     if(!jarURL || self.closingHost || self.hostFinished)return;
     [self cancelActiveInputs];
@@ -846,6 +910,10 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
 - (void)frame {
     if(!self.activeTabId)return;
     int width,height;NSData *data=EmConsumeFrame(self.activeTabId,&width,&height);if(!data)return;
+    // The runtime may fit legacy asset packs to a smaller logical framebuffer.
+    self.screen.virtualWidth=width;self.screen.virtualHeight=height;
+    GameTab *sizedTab=[self activeTab];
+    if(sizedTab){sizedTab.virtualWidth=width;sizedTab.virtualHeight=height;}
     CGColorSpaceRef color=CGColorSpaceCreateDeviceRGB();CGDataProviderRef provider=CGDataProviderCreateWithCFData((__bridge CFDataRef)data);
     CGImageRef image=CGImageCreate(width,height,8,32,width*4,color,kCGBitmapByteOrder32Little|kCGImageAlphaFirst,provider,NULL,NO,kCGRenderingIntentDefault);
     if(image){
@@ -1005,7 +1073,8 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
     if(@available(iOS 13.0,*)){}else{self.tableView.separatorColor=[UIColor colorWithWhite:0.22 alpha:1];}
 }
 - (void)cancelPicker {[self dismissViewControllerAnimated:YES completion:nil];}
-- (void)viewWillAppear:(BOOL)animated {[super viewWillAppear:animated];self.games=listGameJars();[self.tableView reloadData];}
+- (void)reloadGames {self.games=listGameJars();[self.tableView reloadData];}
+- (void)viewWillAppear:(BOOL)animated {[super viewWillAppear:animated];[self reloadGames];}
 - (NSInteger)tableView:(UITableView*)tableView numberOfRowsInSection:(NSInteger)section {return self.games.count;}
 - (UITableViewCell*)tableView:(UITableView*)tableView cellForRowAtIndexPath:(NSIndexPath*)index {
     UITableViewCell *cell=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
@@ -1066,37 +1135,107 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
 - (void)importJar {
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
-    UIDocumentPickerViewController *picker=[[UIDocumentPickerViewController alloc] initWithDocumentTypes:@[@"com.gamod.microemu.jar",@"public.archive",@"public.data"] inMode:UIDocumentPickerModeImport];
+    UIDocumentPickerViewController *picker=[[UIDocumentPickerViewController alloc] initWithDocumentTypes:@[@"com.sun.java-archive",@"com.gamod.microemu.jar",@"public.archive",@"public.data"] inMode:UIDocumentPickerModeImport];
 #pragma clang diagnostic pop
     picker.delegate=self;
     if(@available(iOS 11.0,*))picker.allowsMultipleSelection=YES;
     [self presentViewController:picker animated:YES completion:nil];
 }
 - (void)documentPicker:(UIDocumentPickerViewController*)controller didPickDocumentsAtURLs:(NSArray<NSURL*>*)urls {
-    for(NSURL *url in urls){if(![url.pathExtension.lowercaseString isEqualToString:@"jar"])continue;BOOL scoped=[url startAccessingSecurityScopedResource];
-        NSURL *target=[gamesDirectory() URLByAppendingPathComponent:url.lastPathComponent];if([[NSFileManager defaultManager] fileExistsAtPath:target.path])target=[gamesDirectory() URLByAppendingPathComponent:[NSString stringWithFormat:@"%@-%@.jar",url.lastPathComponent.stringByDeletingPathExtension,NSUUID.UUID.UUIDString]];
-        NSError *error=nil;[[NSFileManager defaultManager] copyItemAtURL:url toURL:target error:&error];if(scoped)[url stopAccessingSecurityScopedResource];
-        NSString *key=target.path?:target.lastPathComponent;[self.icons removeObjectForKey:key];[self.subtitles removeObjectForKey:key];
-        if(error){UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"Import failed" message:error.localizedDescription preferredStyle:UIAlertControllerStyleAlert];[alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];[self presentViewController:alert animated:YES completion:nil];}
+    if(!urls.count)return;
+    __block NSUInteger remaining=urls.count;
+    NSMutableArray<NSString*> *errors=[NSMutableArray new];
+    for(NSURL *url in urls){
+        EmImportJar(url,^(NSURL *target,NSError *error){
+            if(error)[errors addObject:[NSString stringWithFormat:@"%@: %@",url.lastPathComponent,error.localizedDescription]];
+            if(--remaining)return;
+            [self reloadGames];
+            if(errors.count){
+                UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"Import failed" message:[errors componentsJoinedByString:@"\n"] preferredStyle:UIAlertControllerStyleAlert];
+                [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+                [self presentViewController:alert animated:YES completion:nil];
+            }
+        });
     }
-    [self viewWillAppear:NO];
 }
+
 @end
 
-@interface AppDelegate : UIResponder <UIApplicationDelegate>
+@interface AppDelegate : UIResponder <UIApplicationDelegate,UINavigationControllerDelegate>
 @property(nonatomic,strong) UIWindow *window;
+@property(nonatomic,strong) NSMutableArray<NSURL*> *incomingJars;
+@property(nonatomic) BOOL openingIncomingJar;
+- (void)openPendingJars;
 @end
 @implementation AppDelegate
 - (BOOL)application:(UIApplication*)application didFinishLaunchingWithOptions:(NSDictionary*)options {
     em_configure_memory_bytes([NSProcessInfo processInfo].physicalMemory);
+    self.incomingJars=[NSMutableArray new];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(jarHostReady:) name:EmJarHostReadyNotification object:nil];
     self.window=[[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
     UINavigationController *navigation=[[UINavigationController alloc] initWithRootViewController:[[LibraryController alloc] initWithStyle:emTableStyle()]];
+    navigation.delegate=self;
     navigation.navigationBar.prefersLargeTitles=YES;
     if(@available(iOS 13.0,*)){self.window.overrideUserInterfaceStyle=UIUserInterfaceStyleDark;}
     else{navigation.navigationBar.barStyle=UIBarStyleBlack;navigation.navigationBar.tintColor=UIColor.systemBlueColor;}
-    self.window.rootViewController=navigation;[self.window makeKeyAndVisible];return YES;
+    self.window.rootViewController=navigation;[self.window makeKeyAndVisible];
+    // With this AppDelegate lifecycle, UIKit delivers cold-launch file URLs
+    // through openURL:options: after initialization as well. Do not import twice.
+    return YES;
+}
+- (BOOL)application:(UIApplication*)application openURL:(NSURL*)url options:(NSDictionary<UIApplicationOpenURLOptionsKey,id>*)options {
+    if(!url.isFileURL || ![url.pathExtension.lowercaseString isEqualToString:@"jar"])return NO;
+    EmImportJar(url,^(NSURL *target,NSError *error){
+        UINavigationController *navigation=(UINavigationController*)self.window.rootViewController;
+        if(!target){
+            UIViewController *presenter=navigation;
+            while(presenter.presentedViewController)presenter=presenter.presentedViewController;
+            UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"Cannot open JAR" message:error.localizedDescription preferredStyle:UIAlertControllerStyleAlert];
+            [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+            [presenter presentViewController:alert animated:YES completion:nil];
+            return;
+        }
+        LibraryController *library=(LibraryController*)navigation.viewControllers.firstObject;
+        [library reloadGames];
+        [self.incomingJars addObject:target];
+        [self openPendingJars];
+    });
+    return YES;
+}
+- (void)navigationController:(UINavigationController*)navigation didShowViewController:(UIViewController*)viewController animated:(BOOL)animated {
+    self.openingIncomingJar=NO;
+    [self openPendingJars];
+}
+- (void)jarHostReady:(NSNotification*)notification {[self openPendingJars];}
+- (void)openPendingJars {
+    if(self.openingIncomingJar || !self.incomingJars.count)return;
+    UINavigationController *navigation=(UINavigationController*)self.window.rootViewController;
+    UIViewController *top=navigation.topViewController;
+    UIViewController *presenter=navigation.presentedViewController?navigation:top;
+    if(presenter.presentedViewController){
+        self.openingIncomingJar=YES;
+        [presenter dismissViewControllerAnimated:NO completion:^{self.openingIncomingJar=NO;[self openPendingJars];}];
+        return;
+    }
+    NSURL *jar=self.incomingJars.firstObject;
+    if([top isKindOfClass:GameController.class]){
+        GameController *game=(GameController*)top;
+        if(game.hostFinished){self.openingIncomingJar=YES;[game close];return;}
+        if(!game.hostStarted || game.closingHost)return;
+        if(![game openExternalJar:jar])return;
+        [self.incomingJars removeObjectAtIndex:0];
+    }else{
+        if(runtimeActive)return;
+        self.openingIncomingJar=YES;
+        GameController *game=[GameController new];game.jar=jar;
+        [self.incomingJars removeObjectAtIndex:0];
+        [navigation pushViewController:game animated:YES];
+        return; // didShowViewController resumes the queue after the transition.
+    }
+    if(self.incomingJars.count)dispatch_async(dispatch_get_main_queue(),^{[self openPendingJars];});
 }
 @end
+
 #if !defined(DEBUG) && defined(__APPLE__)
 #import <dlfcn.h>
 #include <sys/types.h>

@@ -54,11 +54,18 @@ def class_info(data):
 def inspect(path):
     with zipfile.ZipFile(path) as jar:
         names = jar.namelist()
-        manifest = jar.read("META-INF/MANIFEST.MF").decode("utf-8", "replace")
+        manifest_name = next((n for n in names if n.replace("\\", "/").lstrip("/").lower() == "meta-inf/manifest.mf"), None)
+        if manifest_name is None:
+            manifest_name = next((n for n in names if n.replace("\\", "/").lstrip("/").lower() == "manifest.mf"), None)
+        manifest = jar.read(manifest_name).decode("utf-8-sig", "replace") if manifest_name else ""
         # Some old build tools emit CRCRLF. Preserve continuation semantics.
         manifest = manifest.replace("\r\r\n", "\n").replace("\r\n", "\n").replace("\r", "\n")
         manifest = manifest.replace("\n ", "")
-        properties = dict(line.split(": ", 1) for line in manifest.splitlines() if ": " in line)
+        properties = {}
+        for line in manifest.splitlines():
+            if ":" in line:
+                key, value = line.split(":", 1)
+                properties[key.strip()] = value.strip()
         internal = {n[:-6] for n in names if n.endswith(".class")}
         references, members, strings, versions = set(), set(), set(), collections.Counter()
         for name in names:
@@ -74,7 +81,7 @@ def inspect(path):
         endpoints = sorted(s for s in strings if re.search(r"https?://|socket://|\b(?:\d{1,3}\.){3}\d{1,3}\b", s))
         return {
             "file": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
-            "manifest": properties, "class_count": len(internal), "entry_count": len(names),
+            "manifest": properties, "manifest_entry": manifest_name, "class_count": len(internal), "entry_count": len(names),
             "class_versions": dict(sorted(versions.items())), "external_classes": external,
             "external_members": external_members, "endpoint_literals": endpoints,
         }
@@ -82,6 +89,9 @@ def inspect(path):
 
 if __name__ == "__main__":
     from pathlib import Path
+    import sys
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("jar", type=Path)
     parser.add_argument("--output", type=Path)

@@ -24,15 +24,21 @@
   <key>CFBundleDocumentTypes</key><array><dict>
     <key>CFBundleTypeName</key><string>Java ME application</string>
     <key>CFBundleTypeRole</key><string>Viewer</string>
-    <key>LSItemContentTypes</key><array><string>com.gamod.microemu.jar</string></array>
+    <key>LSHandlerRank</key><string>Default</string>
+    <key>CFBundleTypeExtensions</key><array><string>jar</string></array>
+    <key>LSItemContentTypes</key><array><string>com.sun.java-archive</string><string>com.gamod.microemu.jar</string></array>
   </dict></array>
   <key>UTImportedTypeDeclarations</key><array><dict>
-    <key>UTTypeIdentifier</key><string>com.gamod.microemu.jar</string>
-    <key>UTTypeConformsTo</key><array><string>public.data</string><string>public.archive</string></array>
+    <key>UTTypeIdentifier</key><string>com.sun.java-archive</string>
+    <key>UTTypeConformsTo</key><array><string>public.zip-archive</string><string>public.data</string></array>
     <key>UTTypeDescription</key><string>Java archive</string>
     <key>UTTypeTagSpecification</key><dict>
       <key>public.filename-extension</key><array><string>jar</string></array>
-      <key>public.mime-type</key><string>application/java-archive</string>
+      <key>public.mime-type</key><array><string>application/java-archive</string><string>application/x-java-archive</string><string>application/jar</string></array>
     </dict>
+  </dict><dict>
+    <key>UTTypeIdentifier</key><string>com.gamod.microemu.jar</string>
+    <key>UTTypeConformsTo</key><array><string>com.sun.java-archive</string></array>
+    <key>UTTypeDescription</key><string>Java ME game</string>
   </dict></array>
 </dict></plist>

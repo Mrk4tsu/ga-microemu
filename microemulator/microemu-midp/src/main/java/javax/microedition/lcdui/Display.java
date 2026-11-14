@@ -113,7 +113,7 @@ public class Display {
 						}
 						ticker.textPos -= Ticker.PAINT_MOVE;
 					}
-					repaint(current, 0, 0, current.getWidth(), current.getHeight());
+					repaint(current, 0, 0, current.getPaintWidth(), current.getPaintHeight());
 				}
 			}
 		}
@@ -384,7 +384,7 @@ public class Display {
 		public void repaint() {
 			Displayable d = getCurrent();
 			if (d != null) {
-				getDisplay().repaint(d, 0, 0, d.getWidth(), d.getHeight());
+				getDisplay().repaint(d, 0, 0, d.getPaintWidth(), d.getPaintHeight());
 			}
 		}
 
@@ -634,7 +634,7 @@ public class Display {
 		//
 		if (EventDispatcher.EVENT_DISPATCHER_NAME.equals(Thread.currentThread().getName())) {
 			if (current != null) {
-				DeviceFactory.getDevice().getDeviceDisplay().repaint(0, 0, current.getWidth(), current.getHeight());
+				DeviceFactory.getDevice().getDeviceDisplay().repaint(0, 0, current.getPaintWidth(), current.getPaintHeight());
 			}
 			return;
 		}

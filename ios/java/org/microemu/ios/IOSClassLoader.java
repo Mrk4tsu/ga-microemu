@@ -61,6 +61,26 @@ final class IOSClassLoader extends ClassLoader {
         }
     }
 
+    int[] compatibleViewport(int width, int height) {
+        boolean one = false, other = false;
+        for (int i = 0; i < allEntries.size(); i++) {
+            String name = normalize(((JarEntry)allEntries.elementAt(i)).getName()).toLowerCase();
+            if (name.startsWith("x1/")) one = true;
+            else if (name.startsWith("x2/") || name.startsWith("x3/") || name.startsWith("x4/")) other = true;
+        }
+        // Legacy packs containing only x1 assets may also encrypt their PNGs.
+        // Let the game decode its originals by staying within the x1 pixel budget.
+        // Preserve the screen aspect ratio; UIKit scales the completed framebuffer.
+        if (one && !other && (long)width * height > 480L * 320) {
+            double scale = Math.sqrt((480.0 * 320.0) / ((double)width * height));
+            width = Math.max(128, (int)(width * scale));
+            height = Math.max(128, (int)(height * scale));
+            if ((long)width * height > 480L * 320) height = (480 * 320) / width;
+            System.out.println("[JAR] x1-only assets: virtual resolution " + width + "x" + height);
+        }
+        return new int[]{width, height};
+    }
+
     Vector getAllEntries() {
         return allEntries;
     }
@@ -84,7 +104,7 @@ final class IOSClassLoader extends ClassLoader {
             } finally {
                 in.close();
             }
-            byte[] bytes = out.toByteArray();
+            byte[] bytes = LegacyBytecode.adapt(out.toByteArray());
             return defineClass(name, bytes, 0, bytes.length);
         } catch (IOException error) {
             throw new ClassNotFoundException(name + ": " + error);

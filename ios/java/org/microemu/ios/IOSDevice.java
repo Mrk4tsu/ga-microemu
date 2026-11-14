@@ -102,10 +102,64 @@ final class IOSDevice implements Device, DeviceDisplay, FontManager {
     public Image createImage(int w, int h, boolean alpha, int fill) {
         return new IOSImage(NativeBridge.create(w, h, alpha ? fill : 0xff000000 | fill), true);
     }
+    private int imageDiagnostics;
+    private synchronized void imageDiagnostic(String message) {
+        if (imageDiagnostics++ < 32) System.err.println("[JAR] " + message);
+    }
     public Image createImage(String name) throws IOException {
-        InputStream in = IOSRuntime.instance.getResourceAsStream(IOSRuntime.class, name);
-        if (in == null) throw new IOException("Missing image: " + name);
-        try { return createImage(in); } finally { in.close(); }
+        InputStream in = runtime.getResourceAsStream(IOSRuntime.class, name);
+        if (in != null) {
+            try { return createImage(in); } finally { in.close(); }
+        }
+        // Some MIDlets select /x2/ or /x3/ from screen size, but ship only /x1/.
+        // Scale the matching image rather than returning a wrongly sized texture.
+        int start = name.startsWith("/") ? 1 : 0;
+        if (name.length() > start + 3 && (name.charAt(start) == 'x' || name.charAt(start) == 'X')
+                && name.charAt(start + 2) == '/') {
+            int requested = name.charAt(start + 1) - '0';
+            if (requested >= 1 && requested <= 4) {
+                for (int distance = 1; distance <= 3; distance++) {
+                    for (int direction = 1; direction >= -1; direction -= 2) {
+                        int available = requested + distance * direction;
+                        if (available < 1 || available > 4) continue;
+                        String candidate = name.substring(0, start + 1) + available + name.substring(start + 2);
+                        in = runtime.getResourceAsStream(IOSRuntime.class, candidate);
+                        if (in == null) continue;
+                        IOSImage original;
+                        try { original = (IOSImage)createImage(in); } finally { in.close(); }
+                        imageDiagnostic("Image density x" + requested + " <- x" + available + ": " + name);
+                        return scaleDensity(original, requested, available);
+                    }
+                }
+            }
+        }
+        imageDiagnostic("Missing image: " + name);
+        throw new IOException("Missing image: " + name);
+    }
+    private Image scaleDensity(IOSImage original, int requested, int available) throws IOException {
+        int sourceWidth = original.getWidth(), sourceHeight = original.getHeight();
+        long width = Math.max(1L, ((long)sourceWidth * requested + available / 2) / available);
+        long height = Math.max(1L, ((long)sourceHeight * requested + available / 2) / available);
+        if (width == sourceWidth && height == sourceHeight) return original;
+        try {
+            if (width > 8192 || height > 8192 || width * height > 16 * 1024 * 1024)
+                throw new IOException("Density-scaled image is too large");
+            int w = (int)width, h = (int)height;
+            int[] row = new int[sourceWidth], scaled = new int[w * h];
+            int previousY = -1;
+            for (int y = 0; y < h; y++) {
+                int sourceY = (int)((long)y * sourceHeight / h);
+                if (sourceY != previousY) {
+                    original.getRGB(row, 0, sourceWidth, 0, sourceY, sourceWidth, 1);
+                    previousY = sourceY;
+                }
+                for (int x = 0; x < w; x++) scaled[y * w + x] = row[(int)((long)x * sourceWidth / w)];
+            }
+            return createRGBImage(scaled, w, h, true);
+        } finally {
+            // The temporary decoded texture is not exposed to the MIDlet.
+            NativeBridge.release(original.surface);
+        }
     }
     public Image createImage(InputStream in) throws IOException {
         ByteArrayOutputStream out = new ByteArrayOutputStream(); byte[] buffer = new byte[4096]; int count;

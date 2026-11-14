@@ -6,10 +6,17 @@ import javax.microedition.lcdui.*;
 import javax.microedition.midlet.MIDlet;
 import javax.microedition.rms.*;
 
-public final class SmokeMIDlet extends MIDlet {
+public class SmokeMIDlet extends MIDlet {
+    private volatile int painted;
     private void check(boolean value, String message) { if (!value) throw new RuntimeException("SMOKE_FAIL: " + message); }
     public void startApp() {
         try {
+            check(legacy.LegacyCalls.exercise() == 104, "legacy private virtual dispatch and switches");
+            Image density = Image.createImage("/x2/compat.png");
+            check(density.getWidth() == 4 && density.getHeight() == 6, "density fallback dimensions");
+            int[] densityPixels = new int[24];
+            density.getRGB(densityPixels, 0, 4, 0, 0, 4, 6);
+            check(densityPixels[0] == 0xffff0000 && densityPixels[2] == 0x8000ff00 && densityPixels[20] == 0xffff00ff, "density fallback pixels and alpha");
             Image image = Image.createImage(8, 8); Graphics g = image.getGraphics();
             g.setColor(0x123456); g.setClip(1, 1, 2, 2); g.fillRect(0, 0, 8, 8);
             int[] data = new int[64]; image.getRGB(data, 0, 8, 0, 0, 8, 8);
@@ -42,16 +49,23 @@ public final class SmokeMIDlet extends MIDlet {
                 check(new String(body.toByteArray(),"UTF-8").equals("HTTP_OK"),"HTTP body");response.close();http.close();
             }
             final StringBuffer typed = new StringBuffer();
-            Display.getDisplay(this).setCurrent(new Canvas() {
-                protected void paint(Graphics graphics) { graphics.setColor(0x123456); graphics.fillRect(0,0,getWidth(),getHeight()); graphics.drawImage(source,20,20,Graphics.TOP|Graphics.LEFT); }
+            final Canvas canvas = new Canvas() {
+                public int getWidth() { return 0; }
+                public int getHeight() { return 0; }
+                protected void paint(Graphics graphics) { painted++; graphics.setColor(0x123456); graphics.fillRect(0,0,graphics.getClipWidth(),graphics.getClipHeight()); graphics.drawImage(source,20,20,Graphics.TOP|Graphics.LEFT); }
                 protected void keyPressed(int key) { typed.append((char)key); }
-            });
+            };
+            Display.getDisplay(this).setCurrent(canvas);
             new Thread(new Runnable() {
                 public void run() {
                     try {
                         long deadline = System.currentTimeMillis() + 3000;
                         while (typed.length() < 6 && System.currentTimeMillis() < deadline) Thread.sleep(10);
                         check(typed.toString().equals("Test42"), "Canvas keyboard text input");
+                        canvas.repaint();
+                        deadline = System.currentTimeMillis() + 2000;
+                        while (painted < 2 && System.currentTimeMillis() < deadline) Thread.sleep(10);
+                        check(painted >= 2, "Canvas overrides must not suppress repaint");
                         System.out.println("SMOKE_PASS: graphics, transforms, RMS persistence, TCP bytes, HTTP, Canvas keyboard");
                     } catch(Throwable error) { error.printStackTrace(); NativeBridge.failed("SMOKE_FAIL: " + error); }
                     notifyDestroyed();

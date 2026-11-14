@@ -96,6 +96,8 @@ public final class IOSRuntime implements MicroEmulator, TabRunner {
             }
             throw new IOException("JAR has no MIDlet manifest or runnable MIDlet class");
         }
+        int[] viewport = loader.compatibleViewport(width, height);
+        width = viewport[0]; height = viewport[1];
         MIDletBridge.setMicroEmulator(this);
         device = new IOSDevice(this, width, height);
         DeviceFactory.setDevice(device);
@@ -203,25 +205,38 @@ public final class IOSRuntime implements MicroEmulator, TabRunner {
     }
 
     private static String scanForMidletClass(IOSClassLoader cl) {
-        Vector entries = cl.getAllEntries();
+        Vector entries = cl.getAllEntries(), candidates = new Vector();
+        Hashtable parents = new Hashtable();
         for (int i = 0; i < entries.size(); i++) {
             java.util.jar.JarEntry entry = (java.util.jar.JarEntry) entries.elementAt(i);
             String name = entry.getName();
-            if (!name.endsWith(".class") || name.startsWith("org/microemu/") || name.startsWith("javax/")) continue;
+            if (!name.endsWith(".class")) continue;
             try {
                 InputStream in = cl.getArchive().getInputStream(entry);
                 if (in == null) continue;
-                ByteArrayOutputStream out = new ByteArrayOutputStream();
-                byte[] buf = new byte[2048];
-                int n;
-                while ((n = in.read(buf)) != -1) out.write(buf, 0, n);
-                in.close();
-                byte[] data = out.toByteArray();
+                byte[] data;
+                try {
+                    ByteArrayOutputStream out = new ByteArrayOutputStream();
+                    byte[] buf = new byte[2048]; int n;
+                    while ((n = in.read(buf)) != -1) if (n > 0) out.write(buf, 0, n);
+                    data = out.toByteArray();
+                } finally { in.close(); }
                 String[] parsed = parseClassHeader(data);
-                if (parsed != null && "javax/microedition/midlet/MIDlet".equals(parsed[1])) {
-                    return parsed[0].replace('/', '.');
+                if (parsed != null) {
+                    parents.put(parsed[0], parsed[1]);
+                    int flags = Integer.parseInt(parsed[2]);
+                    if ((flags & 0x0601) == 1 && !name.startsWith("org/microemu/") && !name.startsWith("javax/"))
+                        candidates.addElement(parsed[0]);
                 }
-            } catch (Throwable ignored) { }
+            } catch (IOException ignored) {
+            } catch (RuntimeException ignored) { }
+        }
+        for (int i = 0; i < candidates.size(); i++) {
+            String candidate = (String)candidates.elementAt(i), parent = candidate;
+            for (int depth = 0; parent != null && depth <= parents.size(); depth++) {
+                if ("javax/microedition/midlet/MIDlet".equals(parent)) return candidate.replace('/', '.');
+                parent = (String)parents.get(parent);
+            }
         }
         return null;
     }
@@ -270,6 +285,7 @@ public final class IOSRuntime implements MicroEmulator, TabRunner {
             index++;
         }
         if (offset + 6 > data.length) return null;
+        int accessFlags = ((data[offset] & 0xFF) << 8) | (data[offset + 1] & 0xFF);
         offset += 2;
         int thisClassIdx = ((data[offset] & 0xFF) << 8) | (data[offset + 1] & 0xFF);
         offset += 2;
@@ -278,7 +294,7 @@ public final class IOSRuntime implements MicroEmulator, TabRunner {
         String thisClassName = resolveClassName(pool, thisClassIdx);
         String superClassName = resolveClassName(pool, superClassIdx);
         if (thisClassName != null && superClassName != null) {
-            return new String[] { thisClassName, superClassName };
+            return new String[] { thisClassName, superClassName, Integer.toString(accessFlags) };
         }
         return null;
     }
