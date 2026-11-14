@@ -14,7 +14,7 @@ Ngày: 2026-11-14. Giữ miniJVM pin `76f904ea4008a8058db5155bf5ee2cfe94d19e60`.
 
 ## Cấu hình từng game
 
-UIKit có bộ chọn kích thước trước mỗi phiên mới, gồm preset/custom/Full screen, nhớ lựa chọn theo tên JAR. Lựa chọn này ưu tiên hơn profile file cũ. Full screen thử lại một lần ở vùng vẽ nhỏ hơn nếu lỗi ảnh trước khung hình đầu tiên; xem [screen-size-selection.md](screen-size-selection.md).
+UIKit hỏi kích thước ở lần đầu mở mỗi JAR, gồm preset/custom/Full screen, rồi dùng lựa chọn đã lưu cho các lần mở sau. Nút ⓘ trong danh sách JAR mở trình sửa, áp dụng từ lần mở tiếp theo. Lựa chọn này ưu tiên hơn profile file cũ. Full screen thử lại một lần ở vùng vẽ nhỏ hơn nếu lỗi ảnh trước khung hình đầu tiên; xem [screen-size-selection.md](screen-size-selection.md).
 
 Đường chạy host cũ vẫn hỗ trợ file người dùng: `<rmsPath>/profiles/<sha256-JAR>.properties`. File có thể chứa:
 

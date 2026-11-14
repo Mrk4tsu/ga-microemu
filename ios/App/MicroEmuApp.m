@@ -190,10 +190,16 @@ static UIImage *emFallbackJarIcon(void) {
     UIGraphicsEndImageContext();
     return result;
 }
-static UIImage *emIconFromJar(NSURL *jarURL, NSString **outSuiteName) {
+static UIImage *emIconFromJar(NSURL *jarURL, NSString **outSuiteName, NSString **outAuthor) {
     NSDictionary<NSString*,NSString*> *manifest=emParseManifest(jarURL);
     NSString *suite=manifest[@"MIDlet-Name"]?:manifest[@"midlet-name"]?:jarURL.lastPathComponent.stringByDeletingPathExtension;
     if(outSuiteName)*outSuiteName=suite?:@"";
+    NSString *author=@"";
+    for(NSString *key in @[@"midlet-author",@"author",@"midlet-vendor"]){
+        NSString *value=[manifest[key] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        if(value.length){author=value;break;}
+    }
+    if(outAuthor)*outAuthor=author;
     NSMutableArray<NSString*> *candidates=[NSMutableArray new];
     NSString *m1=manifest[@"MIDlet-1"]?:manifest[@"midlet-1"];
     if(m1.length){
@@ -345,6 +351,7 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
 @property(nonatomic,strong) NSArray<NSURL*> *games;
 @property(nonatomic,strong) NSMutableDictionary<NSString*,UIImage*> *icons;
 @property(nonatomic,strong) NSMutableDictionary<NSString*,NSString*> *subtitles;
+@property(nonatomic,strong) NSMutableDictionary<NSString*,NSString*> *authors;
 @property(nonatomic,copy) void (^onPickJar)(NSURL *jar);
 - (void)reloadGames;
 @end
@@ -697,11 +704,21 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
         return;
     }
     [self cancelActiveInputs];
-    self.choosingResolution=YES;
     NSURL *jarURL=self.pendingLaunches.firstObject;
     [self.view layoutIfNeeded];
     int fullWidth=(int)MIN(EM_VIEWPORT_MAX,MAX(EM_VIEWPORT_MIN,llround(self.screen.bounds.size.width)));
     int fullHeight=(int)MIN(EM_VIEWPORT_MAX,MAX(EM_VIEWPORT_MIN,llround(self.screen.bounds.size.height)));
+    NSDictionary<NSString*,NSNumber*> *saved=[ScreenSizePicker savedSizeForJar:jarURL];
+    if(saved){
+        BOOL fullScreen=[saved[@"fullScreen"] boolValue];
+        int width=fullScreen?fullWidth:[saved[@"width"] intValue];
+        int height=fullScreen?fullHeight:[saved[@"height"] intValue];
+        [self.pendingLaunches removeObjectAtIndex:0];
+        [self launchNewTabWithJar:jarURL width:width height:height fullScreen:fullScreen];
+        [self processLaunchQueue];
+        return;
+    }
+    self.choosingResolution=YES;
     ScreenSizePicker *picker=[[ScreenSizePicker alloc] initWithJar:jarURL fullWidth:fullWidth fullHeight:fullHeight];
     picker.onFinish=^(BOOL accepted,int width,int height,BOOL fullScreen){
         GameController *owner=weakSelf;if(!owner)return;
@@ -1107,7 +1124,7 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
 @implementation LibraryController
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.icons=[NSMutableDictionary new];self.subtitles=[NSMutableDictionary new];
+    self.icons=[NSMutableDictionary new];self.subtitles=[NSMutableDictionary new];self.authors=[NSMutableDictionary new];
     self.title=self.onPickJar?@"Choose JAR":@"GaEmulator";
     self.navigationItem.largeTitleDisplayMode=self.onPickJar?UINavigationItemLargeTitleDisplayModeNever:UINavigationItemLargeTitleDisplayModeAlways;
     if(self.onPickJar){
@@ -1130,22 +1147,37 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
     NSString *key=jar.path?:jar.lastPathComponent;
     UIImage *icon=self.icons[key];
     NSString *suite=self.subtitles[key];
+    NSString *author=self.authors[key];
     if(!icon){
-        icon=emIconFromJar(jar,&suite);
+        icon=emIconFromJar(jar,&suite,&author);
         if(icon)self.icons[key]=icon;
         if(suite)self.subtitles[key]=suite;
+        self.authors[key]=author?:@"";
     }
     cell.textLabel.text=jar.lastPathComponent;
-    cell.detailTextLabel.text=self.onPickJar?@"Open in new tab":(suite.length?[NSString stringWithFormat:@"%@ · Java ME",suite]:@"Java ME · Full Screen");
+    cell.detailTextLabel.text=author.length?[NSString stringWithFormat:@"By %@",author]:(self.onPickJar?@"Open in new tab":(suite.length?[NSString stringWithFormat:@"%@ · Java ME",suite]:@"Java ME · Full Screen"));
     cell.imageView.image=icon;
     cell.imageView.contentMode=UIViewContentModeScaleAspectFit;
-    cell.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
+    cell.accessoryType=UITableViewCellAccessoryDetailButton;
     if(@available(iOS 13.0,*)){}else{
         cell.backgroundColor=[UIColor colorWithWhite:0.13 alpha:1];
         cell.textLabel.textColor=UIColor.whiteColor;
         cell.detailTextLabel.textColor=emSecondaryLabelColor();
     }
     return cell;
+}
+- (void)tableView:(UITableView*)tableView accessoryButtonTappedForRowWithIndexPath:(NSIndexPath*)indexPath {
+    if(self.presentedViewController || indexPath.row>=(NSInteger)self.games.count)return;
+    ScreenSizePicker *picker=[[ScreenSizePicker alloc] initWithJar:self.games[indexPath.row] fullWidth:0 fullHeight:0];
+    picker.editingSettings=YES;
+    __weak LibraryController *weakSelf=self;
+    picker.onFinish=^(BOOL accepted,int width,int height,BOOL fullScreen){
+        [weakSelf dismissViewControllerAnimated:YES completion:nil];
+    };
+    UINavigationController *navigation=[[UINavigationController alloc] initWithRootViewController:picker];
+    navigation.modalPresentationStyle=UIModalPresentationFullScreen;
+    if(@available(iOS 13.0,*)){}else{navigation.navigationBar.barStyle=UIBarStyleBlack;navigation.navigationBar.tintColor=UIColor.systemBlueColor;}
+    [self presentViewController:navigation animated:YES completion:nil];
 }
 - (BOOL)tableView:(UITableView*)tableView canEditRowAtIndexPath:(NSIndexPath*)indexPath {return !self.onPickJar;}
 - (void)tableView:(UITableView*)tableView commitEditingStyle:(UITableViewCellEditingStyle)editingStyle forRowAtIndexPath:(NSIndexPath*)indexPath {
@@ -1162,14 +1194,16 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
     NSString *key=target.path?:target.lastPathComponent;
     [self.icons removeObjectForKey:key];
     [self.subtitles removeObjectForKey:key];
+    [self.authors removeObjectForKey:key];
+    [ScreenSizePicker removeSavedSizeForJar:target];
     self.games=listGameJars();
     emRemoveGameData(deletedSuiteKey,self.games);
     [tableView deleteRowsAtIndexPaths:@[indexPath] withRowAnimation:UITableViewRowAnimationAutomatic];
     [tableView reloadSections:[NSIndexSet indexSetWithIndex:0] withRowAnimation:UITableViewRowAnimationNone];
 }
 - (NSString*)tableView:(UITableView*)tableView titleForFooterInSection:(NSInteger)section {
-    if(self.onPickJar)return self.games.count?@"Tap a game to open it in a new tab.":@"No JAR files yet. Tap Import JAR to add one.";
-    return self.games.count?@"Tap a game to run it. Swipe left or tap Edit to remove a JAR.":@"Import a MIDP JAR from Files to get started. Games run locally on your iPhone.";
+    if(self.onPickJar)return self.games.count?@"Tap a game to open it in a new tab. Tap ⓘ to change its screen size for the next launch.":@"No JAR files yet. Tap Import JAR to add one.";
+    return self.games.count?@"Tap a game to run it. Set up its screen size once; tap ⓘ to change it later. Swipe left or tap Edit to remove a JAR.":@"Import a MIDP JAR from Files to get started. Games run locally on your iPhone.";
 }
 - (void)tableView:(UITableView*)tableView didSelectRowAtIndexPath:(NSIndexPath*)index {
     if(self.onPickJar){
