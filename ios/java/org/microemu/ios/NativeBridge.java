@@ -3,6 +3,22 @@ package org.microemu.ios;
 /** Native functions registered explicitly with the embedded interpreter. */
 public final class NativeBridge {
     private NativeBridge() { }
+    public static native boolean validViewport(int width, int height);
+    public static native boolean userViewportTab(int tabId);
+    public static native boolean fullScreenTab(int tabId);
+    public static native void prepareViewportRetry(int tabId);
+    public static native boolean firstFrameSeen(long generation);
+    public static native boolean userStopRequested(int tabId);
+    public static final int RETRY_VIEWPORT = 2;
+    /** A smaller framebuffer with the same aspect ratio can be enlarged by the frontend. */
+    public static int[] fallbackViewport(int width, int height) {
+        if ((long)width * height > 153600L) {
+            double scale = Math.sqrt(153600.0 / ((double)width * height));
+            width = Math.max(128, (int)(width * scale)); height = Math.max(128, (int)(height * scale));
+            if ((long)width * height > 153600L) height = 153600 / width;
+        }
+        return new int[]{width, height};
+    }
     public static native String sha256File(String path);
     public static native long beginSession(int tabId);
     public static native void bindSession(long generation);

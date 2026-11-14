@@ -98,6 +98,7 @@ void em_platform_status(int tab_id, const char *s) {
     call_once(&host_lock_once, init_host_lock);
     mtx_lock(&host_lock);
     if (getenv("MICROEMU_STOP_ON_STATUS") && !strcmp(s, "SESSION_ARM")) stop_armed_at = seconds();
+    if (getenv("MICROEMU_STOP_ON_RETRY") && !strncmp(s, "Full screen:", 12)) em_host_close_tab(tab_id);
     if (getenv("MICROEMU_SCHEDULE_ON_STATUS") && !strcmp(s, "UI_ARM_SCHEDULE")) schedule_origin = seconds();
     mtx_unlock(&host_lock);
     if (getenv("MICROEMU_NESTED_ROUTING")) {
@@ -259,7 +260,9 @@ int main(int argc, char **argv) {
         if (getenv("MICROEMU_TEST_WIDTH")) host_width = atoi(getenv("MICROEMU_TEST_WIDTH"));
         if (getenv("MICROEMU_TEST_HEIGHT")) host_height = atoi(getenv("MICROEMU_TEST_HEIGHT"));
         started = seconds(); em_reset_events();
-        em_host_open_tab(1, argv[3], argv[4], host_width, host_height);
+        if (getenv("MICROEMU_FULLSCREEN")) em_host_open_tab_fullscreen(1, argv[3], argv[4], host_width, host_height);
+        else if (getenv("MICROEMU_USER_VIEWPORT")) em_host_open_tab_with_viewport(1, argv[3], argv[4], host_width, host_height);
+        else em_host_open_tab(1, argv[3], argv[4], host_width, host_height);
         int result = em_host_run(argv[1], argv[2]);
         printf("[HOST] result=%d frames=%d finished=%d\n", result, frames, tab_finished[1]);
         free(font_data);

@@ -3,6 +3,13 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#define EM_VIEWPORT_MIN 128
+#define EM_VIEWPORT_MAX 1920
+static inline int em_viewport_valid(int width, int height) {
+    return width >= EM_VIEWPORT_MIN && width <= EM_VIEWPORT_MAX &&
+           height >= EM_VIEWPORT_MIN && height <= EM_VIEWPORT_MAX;
+}
+
 typedef struct EmSurface {
     uint64_t id;
     int width, height;
@@ -21,6 +28,8 @@ int em_run(const char *bootstrap, const char *classpath, const char *jar,
            const char *rms, int width, int height);
 int em_host_run(const char *bootstrap, const char *classpath);
 void em_host_open_tab(int tab_id, const char *jar, const char *rms, int width, int height);
+void em_host_open_tab_with_viewport(int tab_id, const char *jar, const char *rms, int width, int height);
+void em_host_open_tab_fullscreen(int tab_id, const char *jar, const char *rms, int width, int height);
 void em_host_sleep_tab(int tab_id, int sleeping);
 void em_host_close_tab(int tab_id);
 void em_host_shutdown(void);

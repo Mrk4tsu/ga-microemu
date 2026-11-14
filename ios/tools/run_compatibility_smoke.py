@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 import threading
 import zipfile
+from run_smoke import density_fixture
 
 IOS = Path(__file__).resolve().parents[1]
 
@@ -40,11 +41,12 @@ def main(executable, javac):
             with zipfile.ZipFile(file, "w", zipfile.ZIP_DEFLATED) as jar:
                 for item in classes.rglob("*.class"): jar.write(item, item.relative_to(classes).as_posix())
                 jar.writestr("x1/metadata-only", b"resource directory must not determine viewport")
+                jar.writestr("x1/encoded.png", bytes(value ^ 0x5a for value in density_fixture()))
                 jar.writestr("META-INF/MANIFEST.MF", "MIDlet-Name: " + name + "\r\nMIDlet-Vendor: MicroEmu\r\n"
                     "MIDlet-1: Test,,session." + entry + "\r\nTest-Mode: " + mode + "\r\n" + extra + "\r\n")
             return file
 
-        def run(jar, rms, env, frame, seconds=10):
+        def run(jar, rms, env, frame, seconds=10, expect_failure=False):
             try:
                 result = subprocess.run([str(executable), str(rt / "minijvm_rt.jar"), str(rt / "microemu-ios.jar"),
                     str(jar), str(rms), str(seconds), str(frame)], env=env, capture_output=True,
@@ -54,10 +56,10 @@ def main(executable, javac):
                     text = stream.decode("utf-8", "replace") if isinstance(stream, bytes) else (stream or "")
                     print("\n".join(text.splitlines()[-50:]))
                 raise SystemExit("Compatibility timeout: " + jar.stem) from error
-            if result.returncode:
+            if bool(result.returncode) != expect_failure:
                 print(result.stdout); print(result.stderr)
                 raise SystemExit("Compatibility regression, status=" + str(result.returncode))
-            return result.stdout
+            return result.stdout + result.stderr
 
         jar = game("profile", "SessionMIDlet", "normal")
         sha = hashlib.sha256(jar.read_bytes()).hexdigest()
@@ -76,6 +78,54 @@ def main(executable, javac):
             if size != expected or (case != "default" and "cache=hit" not in output):
                 raise SystemExit("Profile precedence/cache mismatch: " + case + " " + str(size))
             print("PASS: profile %s %dx%d (x1 assets, metadata scan does not initialize StaticBlockMIDlet)" % (case, *size))
+
+        # An explicit launch choice wins over an old per-game profile file.
+        env.update(MICROEMU_USER_VIEWPORT="1", MICROEMU_TEST_WIDTH="428", MICROEMU_TEST_HEIGHT="541")
+        output=run(jar,rms,env,frame)
+        if "source=user-selection" not in output or struct.unpack(">II",frame.read_bytes()[16:24])!=(428,541):
+            raise SystemExit("The chosen launch size was overridden")
+        env["MICROEMU_TEST_WIDTH"]="1921"
+        output=run(jar,rms,env,frame,expect_failure=True)
+        if "Invalid screen size" not in output or "state=STARTING" in output:
+            raise SystemExit("An oversized launch reached game code")
+        print("PASS: explicit launch size wins over profile; 1921 px is rejected before game startup")
+
+        encoded=game("encoded", "FullScreenMIDlet", "normal")
+        env.update(MICROEMU_TEST_WIDTH="428",MICROEMU_TEST_HEIGHT="541")
+        output=run(encoded,root/"encoded-fixed",env,frame,expect_failure=True)
+        if "[IMAGE_ERROR]" not in output or "resource=/x1/encoded.png requested=/x2/encoded.png" not in output or "[LAUNCH_FAILED]" not in output:
+            raise SystemExit("Image-loading failure was hidden")
+        env["MICROEMU_FULLSCREEN"]="1"
+        frame.unlink(missing_ok=True)
+        output=run(encoded,root/"encoded-full",env,frame)
+        if ("[FULLSCREEN]" not in output or "retry-render=348x440 upscale-to=428x541" not in output
+            or output.count("[SESSION] reclaimed")!=2 or struct.unpack(">II",frame.read_bytes()[16:24])!=(348,440)):
+            print(output);raise SystemExit("Full screen did not restart and upscale after the image failure")
+        print("PASS: fixed size reports encoded x1/x2 failure; Full screen retries at 348x440 and scales to 428x541")
+        paint=game("encoded-paint", "FullScreenMIDlet", "paint")
+        output=run(paint,root/"encoded-paint",env,frame)
+        if "[FULLSCREEN]" not in output or "[SESSION] first-frame" not in output:
+            raise SystemExit("An image failure in the first paint did not trigger Full screen scaling")
+        print("PASS: Full screen also recovers when images fail in the first paint callback")
+
+        late=game("encoded-late", "FullScreenMIDlet", "late-paint")
+        output=run(late,root/"encoded-late",env,frame)
+        if "[PAINT_FAILED]" not in output or "[FULLSCREEN]" in output or output.count("[SESSION] reclaimed")!=1:
+            print(output);raise SystemExit("Full screen restarted a game after its first successful frame")
+        print("PASS: image errors after the first frame skip the failed paint without restarting the game")
+
+        broken=game("encoded-broken", "FullScreenMIDlet", "unrecoverable")
+        output=run(broken,root/"encoded-broken",env,frame,expect_failure=True)
+        if output.count("[FULLSCREEN]")!=1 or output.count("[SESSION] reclaimed")!=2 or "result=-1" not in output:
+            print(output);raise SystemExit("An unrecoverable image error did not stop after one retry")
+        print("PASS: unrecoverable images report failure after exactly one retry")
+
+        env.update(MICROEMU_STOP_ON_RETRY="1",MICROEMU_ALLOW_NO_FRAME="1")
+        output=run(encoded,root/"encoded-stop",env,frame)
+        if output.count("[SESSION] reclaimed")!=1 or "[SESSION] first-frame" in output:
+            print(output);raise SystemExit("Stop at the retry boundary launched another game session")
+        env.pop("MICROEMU_STOP_ON_RETRY");env.pop("MICROEMU_ALLOW_NO_FRAME")
+        print("PASS: Stop at the retry boundary cancels the retry without opening another session")
 
         with socketserver.ThreadingTCPServer(("127.0.0.1", 0), Handler) as server:
             server.daemon_threads = True; server.release = threading.Event()

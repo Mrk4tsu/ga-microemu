@@ -13,13 +13,14 @@ import org.microemu.MIDletBridge;
 import org.microemu.device.*;
 import org.microemu.device.ui.UIFactory;
 
-final class IOSDevice implements Device, DeviceDisplay, FontManager {
+final class IOSDevice implements Device, DeviceDisplay, FontManager, PaintFailureHandler {
     final int width, height;
     final IOSImage screen;
     private final IOSRuntime runtime;
     private final IOSUI ui = new IOSUI();
     private final Map properties = new HashMap();
     private final Map gameBuffers = new java.util.WeakHashMap();
+    private final ThreadLocal failedPaint = new ThreadLocal();
     private final IOSInput input = new IOSInput();
     private final class IOSInput extends InputMethod {
         private InputMethodListener editing;
@@ -121,8 +122,20 @@ final class IOSDevice implements Device, DeviceDisplay, FontManager {
         // while holding an emulator monitor shared with image/input operations.
         MIDletAccess access = MIDletBridge.getMIDletAccess();
         if (access != null && access.getDisplayAccess() != null) {
-            access.getDisplayAccess().paint(new IOSGraphics(screen));
-            NativeBridge.presentTab(runtime.tabId, screen.surface);
+            failedPaint.set(Boolean.FALSE);
+            try {
+                access.getDisplayAccess().paint(new IOSGraphics(screen));
+                if (!runtime.hasGameFailure() && !Boolean.TRUE.equals(failedPaint.get()))
+                    NativeBridge.presentTab(runtime.tabId, screen.surface);
+            } finally { failedPaint.remove(); }
+        }
+    }
+    public void paintFailed(Throwable error) {
+        failedPaint.set(Boolean.TRUE);
+        if (!runtime.firstFrameSeen() && runtime.hasImageFailure()) runtime.gameFailed(error);
+        else {
+            System.err.println("[PAINT_FAILED] tab=" + runtime.tabId + " viewport=" + width + "x" + height);
+            error.printStackTrace();
         }
     }
     void presentScreen() {
@@ -132,16 +145,34 @@ final class IOSDevice implements Device, DeviceDisplay, FontManager {
         return new IOSImage(NativeBridge.create(w, h, alpha ? fill : 0xff000000 | fill), true);
     }
     private int imageDiagnostics;
+    private int imageFailures;
     private final Object diagnosticLock = new Object();
     private void imageDiagnostic(String message) {
         boolean log;
         synchronized (diagnosticLock) { log = imageDiagnostics++ < 32; }
         if (log) System.err.println("[JAR] " + message);
     }
+    private void imageFailure(String message) {
+        message = message.replace('\n', '_').replace('\r', '_');
+        runtime.imageFailed(message);
+        boolean log;
+        synchronized (diagnosticLock) { log = imageFailures++ < 64; }
+        if (log) System.err.println("[IMAGE_ERROR] tab=" + runtime.tabId + " viewport=" + width + "x" + height + " " + message);
+    }
+    private Image decodeResource(InputStream in, String requested, String actual) throws IOException {
+        try { return createImage(in); }
+        catch (IllegalArgumentException error) {
+            imageFailure("Cannot decode/allocate resource=" + actual + " requested=" + requested + "; check image format, game encoding or memory limits");
+            throw error;
+        } catch (IOException error) {
+            imageFailure("Cannot read resource=" + actual + " requested=" + requested);
+            throw error;
+        }
+    }
     public Image createImage(String name) throws IOException {
         InputStream in = runtime.getResourceAsStream(IOSRuntime.class, name);
         if (in != null) {
-            try { return createImage(in); } finally { in.close(); }
+            try { return decodeResource(in, name, name); } finally { in.close(); }
         }
         // Some MIDlets select /x2/ or /x3/ from screen size, but ship only /x1/.
         // Scale the matching image rather than returning a wrongly sized texture.
@@ -158,14 +189,14 @@ final class IOSDevice implements Device, DeviceDisplay, FontManager {
                         in = runtime.getResourceAsStream(IOSRuntime.class, candidate);
                         if (in == null) continue;
                         IOSImage original;
-                        try { original = (IOSImage)createImage(in); } finally { in.close(); }
+                        try { original = (IOSImage)decodeResource(in, name, candidate); } finally { in.close(); }
                         imageDiagnostic("Image density x" + requested + " <- x" + available + ": " + name);
                         return scaleDensity(original, requested, available);
                     }
                 }
             }
         }
-        imageDiagnostic("Missing image: " + name);
+        imageFailure("Missing image: " + name);
         throw new IOException("Missing image: " + name);
     }
     private Image scaleDensity(IOSImage original, int requested, int available) throws IOException {

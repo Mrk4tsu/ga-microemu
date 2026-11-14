@@ -140,12 +140,29 @@ public final class IOSHost {
                 TabRunner runner = null;
                 try {
                     if (jarPath == null || rmsPath == null) throw new IllegalArgumentException("Missing tab arguments");
-                    synchronized (BOOT_LOCK) {
-                        cl = new TabClassLoader(emulatorJars, IOSHost.class.getClassLoader());
-                        Thread.currentThread().setContextClassLoader(cl);
-                        runner = (TabRunner) cl.loadClass("org.microemu.ios.IOSRuntime").newInstance();
+                    final boolean fullScreen = NativeBridge.fullScreenTab(tabId);
+                    int renderWidth = width, renderHeight = height;
+                    for (int attempt = 0; attempt < 2; attempt++) {
+                        if (attempt > 0 && NativeBridge.stopRequested(tabId)) { result = 0; break; }
+                        synchronized (BOOT_LOCK) {
+                            cl = new TabClassLoader(emulatorJars, IOSHost.class.getClassLoader());
+                            Thread.currentThread().setContextClassLoader(cl);
+                            runner = (TabRunner) cl.loadClass("org.microemu.ios.IOSRuntime").newInstance();
+                        }
+                        result = runner.runTab(tabId, jarPath, rmsPath, renderWidth, renderHeight);
+                        cl.close(); cl = null; runner = null;
+                        if (result != NativeBridge.RETRY_VIEWPORT) break;
+                        if (!fullScreen || attempt != 0) { result = -1; break; }
+                        if (NativeBridge.stopRequested(tabId)) { result = 0; break; }
+                        int[] fallback = NativeBridge.fallbackViewport(width, height);
+                        if (fallback[0] == renderWidth && fallback[1] == renderHeight) { result = -1; break; }
+                        renderWidth = fallback[0]; renderHeight = fallback[1];
+                        System.out.println("[FULLSCREEN] tab=" + tabId + " requested=" + width + "x" + height
+                            + " retry-render=" + renderWidth + "x" + renderHeight + " upscale-to=" + width + "x" + height
+                            + " reason=image-load-before-first-frame");
+                        NativeBridge.statusTab(tabId, "Full screen: loading smaller images and scaling to fit");
+                        NativeBridge.prepareViewportRetry(tabId);
                     }
-                    result = runner.runTab(tabId, jarPath, rmsPath, width, height);
                 } catch (Throwable error) {
                     error.printStackTrace();
                     NativeBridge.failedTab(tabId, error.toString());

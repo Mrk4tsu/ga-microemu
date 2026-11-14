@@ -179,7 +179,8 @@ final class IOSUI implements UIFactory {
         Thread thread = new Thread(new Runnable() {
             public void run() {
                 org.microemu.MIDletBridge.setThreadMIDletContext(context);
-                target.run();
+                try { target.run(); }
+                catch (Throwable error) { IOSRuntime.instance.gameFailed(error); }
             }
         }, EventDispatcher.EVENT_DISPATCHER_NAME);
         thread.setDaemon(true); thread.start(); return dispatcher;

@@ -14,7 +14,9 @@ Ngày: 2026-11-14. Giữ miniJVM pin `76f904ea4008a8058db5155bf5ee2cfe94d19e60`.
 
 ## Cấu hình từng game
 
-File người dùng: `<rmsPath>/profiles/<sha256-JAR>.properties`. Chưa có màn hình chỉnh profile trong UIKit. File có thể chứa:
+UIKit có bộ chọn kích thước trước mỗi phiên mới, gồm preset/custom/Full screen, nhớ lựa chọn theo tên JAR. Lựa chọn này ưu tiên hơn profile file cũ. Full screen thử lại một lần ở vùng vẽ nhỏ hơn nếu lỗi ảnh trước khung hình đầu tiên; xem [screen-size-selection.md](screen-size-selection.md).
+
+Đường chạy host cũ vẫn hỗ trợ file người dùng: `<rmsPath>/profiles/<sha256-JAR>.properties`. File có thể chứa:
 
 ```properties
 viewport=requested
@@ -44,7 +46,7 @@ Năm JAR tại `Downloads/TestJar` đều đã có frame và `TAB_FINISHED resul
 - Chưa build Xcode/IPA hoặc chạy iPhone trong môi trường Windows này; cần kiểm tra năm JAR, nhập liệu, nhiều tab và số đo latency/frame time/RAM trên thiết bị.
 - Registry I/O hiện theo dõi TCP. DNS, connect còn đang thực thi và TLS/native call tùy ý chưa có cam kết thời gian hủy; supervisor giữ STOPPING và không free tài nguyên đang được thread sử dụng. Không gọi reset toàn JVM như hành vi mặc định của Stop tab.
 - Đây không phải chứng nhận đầy đủ MIDP/Java SE 8. Model Form vẫn có giới hạn xử lý pointer của MicroEmulator; fixture xác minh traversal bằng phím và editor native. DateField/CustomItem và các JSR cần corpus/kiểm thử thiết bị rộng hơn.
-- Profile có override qua file, chưa có editor UIKit; chưa có rule tự kích hoạt workaround theo fingerprint. Chỉ thêm rule khi có đối chứng tái hiện.
+- UIKit có bộ chọn kích thước, chưa có editor cho mọi khóa profile; chưa có rule tự kích hoạt workaround theo fingerprint. Chỉ thêm rule khi có đối chứng tái hiện.
 - Native image bytes được kiểm chứng riêng; kết quả không khẳng định toàn bộ Java heap/RSS không tăng, hoặc mọi native API đã được cô lập.
 
 ## Nguồn tham khảo kiến trúc

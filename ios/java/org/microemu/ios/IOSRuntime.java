@@ -29,6 +29,24 @@ public final class IOSRuntime implements MicroEmulator, TabRunner {
     private final Vector heldKeys = new Vector();
     private boolean pointerDown;
     private int pointerX, pointerY;
+    private volatile int viewportWidth, viewportHeight;
+    private volatile String lastImageFailure;
+    private volatile boolean retryViewport;
+    void imageFailed(String issue) { lastImageFailure = issue; }
+    boolean hasGameFailure() { return workerError != null; }
+    boolean hasImageFailure() { return lastImageFailure != null; }
+    boolean firstFrameSeen() { return NativeBridge.firstFrameSeen(generation); }
+    void gameFailed(Throwable error) {
+        if (workerError != null) return;
+        workerError = error.getClass().getName() + " at " + viewportWidth + "x" + viewportHeight;
+        if (lastImageFailure != null) workerError += "; last image issue: " + lastImageFailure;
+        retryViewport = NativeBridge.fullScreenTab(tabId) && lastImageFailure != null
+            && !NativeBridge.firstFrameSeen(generation) && (long)viewportWidth * viewportHeight > 153600L;
+        running = false;
+        System.err.println("[LAUNCH_FAILED] tab=" + tabId + " " + workerError);
+        // Overridden Throwable methods stay on the cancellable game thread.
+        error.printStackTrace();
+    }
 
     public IOSRuntime() {
         this(0);
@@ -68,6 +86,7 @@ public final class IOSRuntime implements MicroEmulator, TabRunner {
             runtime.start(jarPath, rmsPath, width, height);
             return 0;
         } catch (Throwable error) {
+            if (runtime.retryViewport) return NativeBridge.RETRY_VIEWPORT;
             error.printStackTrace();
             NativeBridge.failedTab(tabId, error.toString());
             return -1;
@@ -99,18 +118,15 @@ public final class IOSRuntime implements MicroEmulator, TabRunner {
     /** This host thread never executes code supplied by a game. */
     private void start(final String jarPath, final String rmsPath, final int width, final int height) throws Exception {
         generation = NativeBridge.beginSession(tabId);
+        viewportWidth = width; viewportHeight = height;
+        System.out.println("[LAUNCH] tab=" + tabId + " jar=" + new File(jarPath).getName().replace('\n', '_').replace('\r', '_')
+            + " requested=" + width + "x" + height + " source=" + (NativeBridge.fullScreenTab(tabId) ? "user-fullscreen" : NativeBridge.userViewportTab(tabId) ? "user-selection" : "frontend"));
         setState("ANALYZING");
         Thread worker = new Thread(new Runnable() {
             public void run() {
                 NativeBridge.bindSession(generation);
                 try { runGame(jarPath, rmsPath, width, height); }
-                catch (Throwable error) {
-                    workerError = error.getClass().getName();
-                    running = false;
-                    // Throwable methods can be overridden by a game. Keep even
-                    // error reporting on the cancellable worker, never the host.
-                    error.printStackTrace();
-                }
+                catch (Throwable error) { gameFailed(error); }
             }
         }, "game-" + tabId);
         worker.start();
@@ -132,6 +148,7 @@ public final class IOSRuntime implements MicroEmulator, TabRunner {
                 reportAt = System.currentTimeMillis() + 5000;
             }
         }
+        if (NativeBridge.userStopRequested(tabId)) retryViewport = false;
         cleanup();
         if (workerError != null) {
             setState("FAILED");
@@ -141,7 +158,7 @@ public final class IOSRuntime implements MicroEmulator, TabRunner {
     }
 
     private void runGame(String jarPath, String rmsPath, int width, int height) throws Exception {
-        if (width < 128 || height < 128 || width > 1920 || height > 1920) throw new IllegalArgumentException("Invalid virtual resolution");
+        if (!NativeBridge.validViewport(width, height)) throw new IllegalArgumentException("Invalid screen size: each dimension must be 128..1920 px");
         File jarFile = new File(jarPath);
         if (!jarFile.exists() || jarFile.length() == 0) {
             throw new IOException("JAR file is missing or empty: " + jarPath);
@@ -158,8 +175,9 @@ public final class IOSRuntime implements MicroEmulator, TabRunner {
             }
             throw new IOException("JAR has no MIDlet manifest or runnable MIDlet class");
         }
-        int[] viewport = CompatibilityProfile.select(analysis, new File(rmsPath), width, height);
+        int[] viewport = CompatibilityProfile.select(analysis, new File(rmsPath), width, height, NativeBridge.userViewportTab(tabId));
         width = viewport[0]; height = viewport[1];
+        viewportWidth = width; viewportHeight = height;
         MIDletBridge.setMicroEmulator(this);
         device = new IOSDevice(this, width, height);
         DeviceFactory.setDevice(device);

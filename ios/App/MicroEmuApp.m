@@ -3,31 +3,13 @@
 #import <CommonCrypto/CommonDigest.h>
 #import <mach/mach.h>
 #import "AppPlatform.h"
+#import "ScreenSizePicker.h"
 #include "emulator.h"
 #include <math.h>
 #include <stdio.h>
 
 static BOOL runtimeActive;
 static NSString *const EmJarHostReadyNotification=@"GaEmulatorHostReady";
-static void EmComputeVirtualSize(CGSize size, int *outWidth, int *outHeight) {
-    if (size.width <= 0 || size.height <= 0) {
-        *outWidth = 480;
-        *outHeight = 320;
-        return;
-    }
-    double width = size.width, height = size.height;
-    double scale = 1.0;
-    if (MAX(width, height) > 1920.0) scale = 1920.0 / MAX(width, height);
-    if (MIN(width, height) * scale < 128.0) scale = 128.0 / MIN(width, height);
-    int virtualWidth = (int)llround(width * scale);
-    int virtualHeight = (int)llround(height * scale);
-    if (virtualWidth < 128) virtualWidth = 128;
-    if (virtualWidth > 1920) virtualWidth = 1920;
-    if (virtualHeight < 128) virtualHeight = 128;
-    if (virtualHeight > 1920) virtualHeight = 1920;
-    *outWidth = virtualWidth;
-    *outHeight = virtualHeight;
-}
 static NSURL *gamesDirectory(void) {
     NSURL *documents=[[[NSFileManager defaultManager] URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask] firstObject];
     NSURL *games=[documents URLByAppendingPathComponent:@"Games" isDirectory:YES];
@@ -286,11 +268,18 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
 @property(nonatomic) int tabId;
 @property(nonatomic) int virtualWidth;
 @property(nonatomic) int virtualHeight;
+@property(nonatomic) BOOL stretchToFill;
 @property(nonatomic,weak) UITouch *pointer;
 @end
 @implementation GameScreen
 - (CGPoint)position:(UITouch*)touch {
-    CGSize size=self.bounds.size;CGFloat scale=MIN(size.width/self.virtualWidth,size.height/self.virtualHeight);
+    CGSize size=self.bounds.size;
+    if(size.width<=0 || size.height<=0)return CGPointMake(-1,-1);
+    if(self.stretchToFill){
+        CGPoint p=[touch locationInView:self];
+        return CGPointMake(p.x*self.virtualWidth/size.width,p.y*self.virtualHeight/size.height);
+    }
+    CGFloat scale=MIN(size.width/self.virtualWidth,size.height/self.virtualHeight);
     CGPoint p=[touch locationInView:self];return CGPointMake((p.x-(size.width-self.virtualWidth*scale)/2)/scale,(p.y-(size.height-self.virtualHeight*scale)/2)/scale);
 }
 - (void)cancelPointer {
@@ -346,6 +335,8 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
 @property(nonatomic) BOOL finished;
 @property(nonatomic) BOOL stopping;
 @property(nonatomic) BOOL sleeping;
+@property(nonatomic) BOOL fullScreen;
+@property(nonatomic,strong) NSDictionary *modalInfo;
 @end
 @implementation GameTab
 @end
@@ -383,6 +374,8 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
 @property(nonatomic) BOOL hostStarted;
 @property(nonatomic) BOOL hostFinished;
 @property(nonatomic) BOOL closingHost;
+@property(nonatomic) BOOL choosingResolution;
+@property(nonatomic,strong) NSMutableArray<NSURL*> *pendingLaunches;
 @property(nonatomic,strong) UIBarButtonItem *stopItem;
 @property(nonatomic,strong) UIBarButtonItem *addTabItem;
 @property(nonatomic,strong) UIButton *tabSelector;
@@ -398,7 +391,7 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
     [super viewDidLoad];self.view.backgroundColor=[UIColor colorWithWhite:0.045 alpha:1];
     self.navigationItem.largeTitleDisplayMode=UINavigationItemLargeTitleDisplayModeNever;
     self.navigationItem.hidesBackButton=YES;
-    self.tabs=[NSMutableArray new];self.padButtons=[NSMutableArray new];self.lastSentText=@"";
+    self.pendingLaunches=[NSMutableArray new];self.tabs=[NSMutableArray new];self.padButtons=[NSMutableArray new];self.lastSentText=@"";
     self.stopItem=[[UIBarButtonItem alloc] initWithTitle:@"Stop" style:UIBarButtonItemStylePlain target:self action:@selector(stop)];
     self.addTabItem=[[UIBarButtonItem alloc] initWithTitle:@"New tab" style:UIBarButtonItemStylePlain target:self action:@selector(newTab)];
     self.navigationItem.leftBarButtonItems=@[self.stopItem,self.addTabItem];
@@ -414,7 +407,7 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
     self.navigationItem.rightBarButtonItems=@[
         [[UIBarButtonItem alloc] initWithTitle:@"Log" style:UIBarButtonItemStylePlain target:self action:@selector(shareLog)],
         [[UIBarButtonItem alloc] initWithTitle:@"Keyboard" style:UIBarButtonItemStylePlain target:self action:@selector(keyboard)]];
-    self.screen=[GameScreen new];self.screen.virtualWidth=480;self.screen.virtualHeight=320;
+    self.screen=[GameScreen new];self.screen.virtualWidth=240;self.screen.virtualHeight=320;
     self.screen.contentMode=UIViewContentModeScaleAspectFit;self.screen.userInteractionEnabled=YES;self.screen.multipleTouchEnabled=YES;self.screen.layer.magnificationFilter=kCAFilterNearest;
     self.statusRow=[UIView new];
     self.status=[UILabel new];self.status.text=@"Opening game…";self.status.textColor=emSecondaryLabelColor();self.status.font=[UIFont systemFontOfSize:12];self.status.numberOfLines=1;
@@ -645,7 +638,7 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
                 if(owner.closingHost){[owner close];return;}
                 for(GameTab *tab in owner.tabs){
                     tab.finished=YES;
-                    tab.statusText=result==0?@"Game stopped":@"Game error — see Log";
+                    tab.statusText=result==0?@"Game stopped":[NSString stringWithFormat:@"Failed at %d × %d — see Log; try a smaller screen",tab.virtualWidth,tab.virtualHeight];
                 }
                 GameTab *active=[owner activeTab];
                 if(active){
@@ -674,7 +667,7 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
 }
 
 - (BOOL)openExternalJar:(NSURL*)jarURL {
-    if(!jarURL || !self.hostStarted || self.closingHost || self.hostFinished)return NO;
+    if(!jarURL || !self.hostStarted || self.closingHost || self.hostFinished || self.choosingResolution)return NO;
     [self cancelActiveInputs];
     for(GameTab *tab in self.tabs){
         if(!tab.finished && !tab.stopping && [tab.jar.URLByStandardizingPath isEqual:jarURL.URLByStandardizingPath]){
@@ -686,6 +679,52 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
 
 - (void)openNewTabWithJar:(NSURL*)jarURL {
     if(!jarURL || self.closingHost || self.hostFinished)return;
+    [self.pendingLaunches addObject:jarURL];
+    [self processLaunchQueue];
+}
+- (void)restoreActiveModal {
+    GameTab *tab=[self activeTab];
+    if(tab.modalInfo && !tab.finished && !tab.stopping)
+        [self modalChanged:[NSNotification notificationWithName:EmModalNotification object:tab.modalInfo]];
+}
+- (void)processLaunchQueue {
+    if(self.choosingResolution || self.closingHost || self.hostFinished || !self.pendingLaunches.count)return;
+    __weak GameController *weakSelf=self;
+    if(self.presentedViewController){
+        if(self.presentedViewController==self.textModal)self.textModal=nil;
+        [self cancelActiveInputs];
+        [self dismissViewControllerAnimated:NO completion:^{[weakSelf processLaunchQueue];}];
+        return;
+    }
+    [self cancelActiveInputs];
+    self.choosingResolution=YES;
+    NSURL *jarURL=self.pendingLaunches.firstObject;
+    [self.view layoutIfNeeded];
+    int fullWidth=(int)MIN(EM_VIEWPORT_MAX,MAX(EM_VIEWPORT_MIN,llround(self.screen.bounds.size.width)));
+    int fullHeight=(int)MIN(EM_VIEWPORT_MAX,MAX(EM_VIEWPORT_MIN,llround(self.screen.bounds.size.height)));
+    ScreenSizePicker *picker=[[ScreenSizePicker alloc] initWithJar:jarURL fullWidth:fullWidth fullHeight:fullHeight];
+    picker.onFinish=^(BOOL accepted,int width,int height,BOOL fullScreen){
+        GameController *owner=weakSelf;if(!owner)return;
+        [owner dismissViewControllerAnimated:YES completion:^{
+            owner.choosingResolution=NO;
+            if(owner.pendingLaunches.count)[owner.pendingLaunches removeObjectAtIndex:0];
+            if(accepted)[owner launchNewTabWithJar:jarURL width:width height:height fullScreen:fullScreen];
+            else [owner restoreActiveModal];
+            if(!owner.tabs.count && !owner.pendingLaunches.count){
+                if(owner.hostFinished){[owner close];return;}
+                owner.closingHost=YES;em_host_shutdown();return;
+            }
+            [owner processLaunchQueue];
+            [[NSNotificationCenter defaultCenter] postNotificationName:EmJarHostReadyNotification object:owner];
+        }];
+    };
+    UINavigationController *navigation=[[UINavigationController alloc] initWithRootViewController:picker];
+    navigation.modalPresentationStyle=UIModalPresentationFullScreen;
+    if(@available(iOS 13.0,*)){}else{navigation.navigationBar.barStyle=UIBarStyleBlack;}
+    [self presentViewController:navigation animated:YES completion:nil];
+}
+- (void)launchNewTabWithJar:(NSURL*)jarURL width:(int)width height:(int)height fullScreen:(BOOL)fullScreen {
+    if(!jarURL || self.closingHost || self.hostFinished || !em_viewport_valid(width,height))return;
     [self cancelActiveInputs];
     GameTab *previous=[self activeTab];
     if(previous){
@@ -694,14 +733,13 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
         if(!previous.finished)em_host_sleep_tab(previous.tabId,1);
     }
     [self.view layoutIfNeeded];
-    int width=480,height=320;
-    EmComputeVirtualSize(self.screen.bounds.size,&width,&height);
     GameTab *tab=[GameTab new];
     tab.tabId=++self.nextTabId;
     tab.rmsSlot=[self nextFreeRmsSlot];
     tab.jar=jarURL;
     tab.virtualWidth=width;
     tab.virtualHeight=height;
+    tab.fullScreen=fullScreen;
     tab.statusText=@"Opening game…";
     tab.started=YES;
     [self.tabs addObject:tab];
@@ -709,12 +747,15 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
     self.screen.tabId=tab.tabId;
     self.screen.virtualWidth=width;
     self.screen.virtualHeight=height;
+    self.screen.stretchToFill=fullScreen;
+    self.screen.contentMode=fullScreen?UIViewContentModeScaleToFill:UIViewContentModeScaleAspectFit;
     self.screen.image=nil;
     self.status.text=tab.statusText;
     self.stopItem.title=@"Stop";
     EmClearFrame(tab.tabId);
     NSString *rms=rmsPathForSlot(tab.rmsSlot);
-    em_host_open_tab(tab.tabId,jarURL.path.fileSystemRepresentation,rms.fileSystemRepresentation,width,height);
+    if(fullScreen)em_host_open_tab_fullscreen(tab.tabId,jarURL.path.fileSystemRepresentation,rms.fileSystemRepresentation,width,height);
+    else em_host_open_tab_with_viewport(tab.tabId,jarURL.path.fileSystemRepresentation,rms.fileSystemRepresentation,width,height);
     [self updateTabSelector];
 }
 - (void)switchToTab:(int)targetTabId {
@@ -732,12 +773,15 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
     self.screen.tabId=next.tabId;
     self.screen.virtualWidth=next.virtualWidth;
     self.screen.virtualHeight=next.virtualHeight;
+    self.screen.stretchToFill=next.fullScreen;
+    self.screen.contentMode=next.fullScreen?UIViewContentModeScaleToFill:UIViewContentModeScaleAspectFit;
     self.screen.image=next.lastImage;
     self.status.text=next.statusText?:@"";
     self.stopItem.title=next.finished?(self.tabs.count>1?@"Close":@"Back"):@"Stop";
     next.sleeping=NO;
     if(!next.finished)em_host_sleep_tab(next.tabId,0);
     [self updateTabSelector];
+    [self restoreActiveModal];
 }
 - (void)presentJarListPicker {
     if(self.closingHost || self.hostFinished || self.presentedViewController)return;
@@ -757,11 +801,11 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
     __weak GameController *weakSelf=self;
     if(currentJar){
         [sheet addAction:[UIAlertAction actionWithTitle:currentJar.lastPathComponent style:UIAlertActionStyleDefault handler:^(UIAlertAction*a){
-            [weakSelf openNewTabWithJar:currentJar];
+            [weakSelf dismissViewControllerAnimated:YES completion:^{[weakSelf openNewTabWithJar:currentJar];}];
         }]];
     }
     [sheet addAction:[UIAlertAction actionWithTitle:@"Choose from list" style:UIAlertActionStyleDefault handler:^(UIAlertAction*a){
-        [weakSelf presentJarListPicker];
+        [weakSelf dismissViewControllerAnimated:YES completion:^{[weakSelf presentJarListPicker];}];
     }]];
     [sheet addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
     sheet.popoverPresentationController.barButtonItem=self.addTabItem;
@@ -939,8 +983,9 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
 - (void)modalChanged:(NSNotification*)notification {
     NSDictionary *info=notification.object;
     int tabId=[info[@"tabId"] intValue];
-    if(tabId!=self.activeTabId)return;
     GameTab *tab=[self tabWithId:tabId];
+    if(tab)tab.modalInfo=info[@"title"]==NSNull.null?nil:info;
+    if(tabId!=self.activeTabId || self.choosingResolution)return;
     if(info[@"title"]==NSNull.null){[self.textModal dismissViewControllerAnimated:NO completion:nil];self.textModal=nil;return;}
     if(!tab || tab.finished || tab.stopping)return;
     [self hideKeyboard];
@@ -975,10 +1020,10 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
     int result=[info[@"result"] intValue];
     GameTab *tab=[self tabWithId:tabId];
     if(!tab)return;
-    tab.finished=YES;
+    tab.finished=YES;tab.modalInfo=nil;
     EmClearFrame(tabId);
     if(tab.stopping){[self removeTab:tab];return;}
-    tab.statusText=result==0?@"Game stopped":@"Game error — see Log";
+    tab.statusText=result==0?@"Game stopped":[NSString stringWithFormat:@"Failed at %d × %d — see Log; try a smaller screen",tab.virtualWidth,tab.virtualHeight];
     if(tabId==self.activeTabId){
         self.status.text=tab.statusText;
         self.stopItem.title=self.tabs.count>1?@"Close":@"Back";
@@ -1214,6 +1259,8 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
     if(self.openingIncomingJar || !self.incomingJars.count)return;
     UINavigationController *navigation=(UINavigationController*)self.window.rootViewController;
     UIViewController *top=navigation.topViewController;
+    // Keep an in-progress screen-size decision intact when another file arrives.
+    if([top isKindOfClass:GameController.class] && ((GameController*)top).choosingResolution)return;
     UIViewController *presenter=navigation.presentedViewController?navigation:top;
     if(presenter.presentedViewController){
         self.openingIncomingJar=YES;

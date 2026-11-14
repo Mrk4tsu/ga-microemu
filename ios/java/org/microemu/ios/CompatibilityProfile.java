@@ -7,9 +7,12 @@ import java.util.Properties;
 final class CompatibilityProfile {
     static final String RUNTIME_VERSION = "minijvm-76f904ea-microemu-1";
     static int[] select(JarAnalyzer jar, File dataDirectory, int width, int height) throws IOException {
+        return select(jar, dataDirectory, width, height, false);
+    }
+    static int[] select(JarAnalyzer jar, File dataDirectory, int width, int height, boolean userSelected) throws IOException {
         Properties user = new Properties();
         File file = new File(new File(dataDirectory, "profiles"), jar.sha256 + ".properties");
-        if (file.isFile()) {
+        if (!userSelected && file.isFile()) {
             InputStream in = new FileInputStream(file);
             try { user.load(in); } finally { in.close(); }
         }
@@ -17,21 +20,17 @@ final class CompatibilityProfile {
         // demonstrates the device difference. Resource directory names are evidence
         // for analysis, never an instruction to resize the game's framebuffer.
         String viewport = user.getProperty("viewport", "requested");
-        String source = file.isFile() ? "user" : "default";
+        String source = userSelected ? "user-selection" : file.isFile() ? "user" : "default";
         String w = user.getProperty("width"), h = user.getProperty("height");
         if (w != null || h != null) {
             if (w == null || h == null) throw new IOException("Profile needs both width and height");
             try { width = Integer.parseInt(w); height = Integer.parseInt(h); }
             catch (NumberFormatException error) { throw new IOException("Invalid profile resolution"); }
         }
-        if (width < 128 || height < 128 || width > 1920 || height > 1920)
+        if (!NativeBridge.validViewport(width, height))
             throw new IOException("Profile resolution must be between 128 and 1920");
         if ("legacy-x1-budget".equals(viewport)) {
-            if ((long)width * height > 153600L) {
-                double scale = Math.sqrt(153600.0 / ((double)width * height));
-                width = Math.max(128, (int)(width * scale)); height = Math.max(128, (int)(height * scale));
-                if ((long)width * height > 153600L) height = 153600 / width;
-            }
+            int[] scaled = NativeBridge.fallbackViewport(width, height); width = scaled[0]; height = scaled[1];
         } else if (!"requested".equals(viewport)) throw new IOException("Unknown viewport profile: " + viewport);
         System.out.println("[PROFILE] schema=" + JarAnalyzer.SCHEMA_VERSION + " runtime=" + RUNTIME_VERSION
             + " sha256=" + jar.sha256 + " source=" + source + " viewport=" + viewport + " size=" + width + "x" + height);

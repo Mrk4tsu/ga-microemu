@@ -14,7 +14,7 @@ Bản port iOS mới sử dụng API MIDP/CLDC của MicroEmulator, JVM thông d
 
 Workflow dùng runner `macos-15`, JDK 17 và Xcode. CI không cần certificate, provisioning profile hoặc Apple ID. App được build bằng SDK `iphoneos`, và bước đóng gói kiểm tra Mach-O ARM64 dành cho thiết bị để tránh đóng nhầm bản Simulator.
 
-Đích triển khai: iOS 15 trở lên, iPhone/iPad; độ phân giải game hiện cố định 480 × 320. Giao diện app xoay được và giữ tỷ lệ màn hình game. Có thể dùng Files → On My iPhone → MicroEmu để quản lý thư mục `Games`. Nút **Log** xuất log của lần chạy hiện tại. Với game tự vẽ ô nhập trong Canvas, chạm ô nhập rồi dùng **Keyboard** để gửi chữ vào game; hộp nhập này che nội dung khi gõ.
+Đích triển khai: iOS 15 trở lên, iPhone/iPad. Trước mỗi phiên mới, chọn preset, nhập kích thước (128–1920 pixel mỗi chiều), hoặc **Full screen**. Full screen phủ vùng hiển thị; nếu lỗi ảnh trước khung hình đầu tiên, app thử một lần ở vùng vẽ nhỏ hơn rồi phóng lên. Chế độ kích thước cố định giữ tỷ lệ màn hình game. Có thể dùng Files → On My iPhone → MicroEmu để quản lý thư mục `Games`. Nút **Log** xuất log của lần chạy hiện tại. Với game tự vẽ ô nhập trong Canvas, chạm ô nhập rồi dùng **Keyboard** để gửi chữ vào game; hộp nhập này che nội dung khi gõ.
 
 ## Phạm vi hỗ trợ hiện tại
 
@@ -112,6 +112,7 @@ Bản sửa tương thích bổ sung:
 - Chuẩn hóa lời gọi `invokevirtual` tới phương thức private của chính class, thường gặp trong JAR đã làm rối mã. Chỉ sửa bytecode trong bộ nhớ; không nới kiểm tra truy cập của JVM hay ghi lại JAR.
 - Tìm MIDlet qua chuỗi kế thừa khi JAR thiếu manifest, bỏ qua class abstract/interface.
 - Giữ vùng vẽ nội bộ độc lập với game override `getWidth()/getHeight()`.
+- Lựa chọn kích thước trước khi chạy được ưu tiên hơn profile cũ. **Full screen** có thể thử lại với ngân sách 153.600 pixel khi lỗi ảnh làm hỏng lần khởi động, rồi phóng lên vùng hiển thị; log ghi cả hai kích thước. Xem [screen-size-selection.md](docs/screen-size-selection.md).
 - Mặc định giữ kích thước vùng vẽ được frontend yêu cầu. Lựa chọn `legacy-x1-budget` giới hạn 153.600 pixel chỉ được áp dụng khi cấu hình riêng của game yêu cầu; tên thư mục `x1/` không tự kích hoạt nó. UIKit dùng kích thước framebuffer thực tế để đổi tọa độ chạm.
 - Khi một ảnh chuẩn ở `x2/`, `x3/` hoặc `x4/` bị thiếu nhưng có bản ở mật độ khác, có thể đổi tỉ lệ bằng nearest-neighbor, giữ alpha.
 

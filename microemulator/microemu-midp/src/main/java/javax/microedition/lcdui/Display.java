@@ -332,7 +332,10 @@ public class Display {
 				try {
 					current.paint(g);
 				} catch (Throwable th) {
-					th.printStackTrace();
+					org.microemu.device.DeviceDisplay platform = DeviceFactory.getDevice().getDeviceDisplay();
+					if (platform instanceof org.microemu.device.PaintFailureHandler)
+						((org.microemu.device.PaintFailureHandler)platform).paintFailed(th);
+					else th.printStackTrace();
 				}
 				g.translate(-g.getTranslateX(), -g.getTranslateY());
 			}

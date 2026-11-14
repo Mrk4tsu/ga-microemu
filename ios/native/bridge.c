@@ -46,6 +46,7 @@ typedef struct TabQueue {
     char *launch_rms;
     int sleeping;
     int stop_requested;
+    int user_viewport;
     size_t text_bytes;
     struct TabQueue *next;
 } TabQueue;
@@ -85,6 +86,7 @@ static void clear_queue_contents(TabQueue *q) {
     free(q->launch_rms); q->launch_rms = NULL;
     q->sleeping = 0;
     q->stop_requested = 0;
+    q->user_viewport = 0;
 }
 void em_tab_reset_events(int tab_id) {
     call_once(&initialized, initialize);
@@ -138,7 +140,7 @@ void em_tab_event(int tab_id, int type, int a, int b, int c, const char *text) {
 void em_event(int type, int a, int b, int c, const char *text) {
     em_tab_event(0, type, a, b, c, text);
 }
-void em_host_open_tab(int tab_id, const char *jar, const char *rms, int width, int height) {
+static void open_tab(int tab_id, const char *jar, const char *rms, int width, int height, int user_viewport) {
     call_once(&initialized, initialize);
     mtx_lock(&event_lock);
     TabQueue *q = queue_for(tab_id, 1);
@@ -146,9 +148,19 @@ void em_host_open_tab(int tab_id, const char *jar, const char *rms, int width, i
         clear_queue_contents(q);
         q->launch_jar = copy_text(jar);
         q->launch_rms = copy_text(rms);
+        q->user_viewport = user_viewport;
     }
     mtx_unlock(&event_lock);
     em_tab_event(0, 100, tab_id, width, height, NULL);
+}
+void em_host_open_tab(int tab_id, const char *jar, const char *rms, int width, int height) {
+    open_tab(tab_id, jar, rms, width, height, 0);
+}
+void em_host_open_tab_with_viewport(int tab_id, const char *jar, const char *rms, int width, int height) {
+    open_tab(tab_id, jar, rms, width, height, 1);
+}
+void em_host_open_tab_fullscreen(int tab_id, const char *jar, const char *rms, int width, int height) {
+    open_tab(tab_id, jar, rms, width, height, 2);
 }
 void em_host_sleep_tab(int tab_id, int sleeping) {
     call_once(&initialized, initialize);
@@ -414,6 +426,48 @@ static s32 browse(Runtime *r, JClass *c) {
     return 0;
 }
 static s32 vibrate(Runtime *r, JClass *c) { em_platform_vibrate(localvar_getInt(r->localvar, 0)); return 0; }
+static s32 valid_viewport(Runtime *r, JClass *c) {
+    push_int(r->stack, em_viewport_valid(localvar_getInt(r->localvar, 0), localvar_getInt(r->localvar, 1)));
+    return 0;
+}
+static s32 user_viewport_tab(Runtime *r, JClass *c) {
+    mtx_lock(&event_lock);
+    TabQueue *q = queue_for(localvar_getInt(r->localvar, 0), 0);
+    push_int(r->stack, q && q->user_viewport);
+    mtx_unlock(&event_lock);
+    return 0;
+}
+static s32 user_stop_requested(Runtime *r, JClass *c) {
+    mtx_lock(&event_lock);
+    TabQueue *q = queue_for(localvar_getInt(r->localvar, 0), 0);
+    push_int(r->stack, q && q->stop_requested);
+    mtx_unlock(&event_lock);
+    return 0;
+}
+static s32 fullscreen_tab(Runtime *r, JClass *c) {
+    mtx_lock(&event_lock);
+    TabQueue *q = queue_for(localvar_getInt(r->localvar, 0), 0);
+    push_int(r->stack, q && q->user_viewport == 2);
+    mtx_unlock(&event_lock);
+    return 0;
+}
+static s32 prepare_viewport_retry(Runtime *r, JClass *c) {
+    if (r->thrd_info->microemu_session) return RUNTIME_STATUS_ERROR;
+    mtx_lock(&event_lock);
+    TabQueue *q = queue_for(localvar_getInt(r->localvar, 0), 1);
+    if (q) q->user_viewport = 2;
+    int sleeping = q && q->sleeping;
+    mtx_unlock(&event_lock);
+    if (sleeping) em_tab_event(localvar_getInt(r->localvar, 0), 15, 1, 0, 0, NULL);
+    return 0;
+}
+static s32 first_frame_seen(Runtime *r, JClass *c) {
+    mtx_lock(&surface_lock);
+    EmSession *s = find_session(localvar_getLong(r->localvar, 0));
+    push_int(r->stack, s && s->frame_seen);
+    mtx_unlock(&surface_lock);
+    return 0;
+}
 static s32 sha256_file(Runtime *r, JClass *c) {
     char *path = string_copy(r, localvar_getRefer(r->localvar, 0));
     char hex[65]; int ok = 0;
@@ -517,12 +571,27 @@ static s32 release_session(Runtime *r, JClass *c) {
                 owner->tab_id, (unsigned long long)id, microemu_io_count(id)); fflush(stdout);
     }
     mtx_unlock(&surface_lock);
-    if (owner) em_tab_reset_events(owner->tab_id);
+    if (owner) {
+        mtx_lock(&event_lock);
+        TabQueue *q = queue_for(owner->tab_id, 0);
+        if (q) {
+            /* A fullscreen retry keeps the tab's Stop/sleep/selection controls.
+             * A new external launch resets them through open_tab(). */
+            int stop = q->stop_requested, sleep = q->sleeping, mode = q->user_viewport;
+            clear_queue_contents(q);
+            q->stop_requested = stop; q->sleeping = sleep; q->user_viewport = mode;
+        }
+        mtx_unlock(&event_lock);
+    }
     push_int(r->stack, 1);
     return 0;
 }
 #define METHOD(name,signature,fn) {"org/microemu/ios/NativeBridge",name,signature,fn}
 static java_native_method methods[] = {
+    METHOD("validViewport","(II)Z",valid_viewport),METHOD("userViewportTab","(I)Z",user_viewport_tab),
+    METHOD("fullScreenTab","(I)Z",fullscreen_tab),METHOD("prepareViewportRetry","(I)V",prepare_viewport_retry),
+    METHOD("firstFrameSeen","(J)Z",first_frame_seen),
+    METHOD("userStopRequested","(I)Z",user_stop_requested),
     METHOD("sha256File","(Ljava/lang/String;)Ljava/lang/String;",sha256_file),
     METHOD("beginSession","(I)J",begin_session),METHOD("bindSession","(J)V",bind_session),
     METHOD("stopRequested","(I)Z",stop_requested),METHOD("cancelSession","(J)I",cancel_session),
