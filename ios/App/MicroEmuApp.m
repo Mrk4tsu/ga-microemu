@@ -105,10 +105,11 @@ static NSDictionary<NSString*,NSString*> *emParseManifest(NSURL *jarURL) {
     if(!raw)return @{};
     NSString *text=[[NSString alloc] initWithData:raw encoding:NSUTF8StringEncoding]?:[[NSString alloc] initWithData:raw encoding:NSISOLatin1StringEncoding];
     if(!text)return @{};
+    if([text hasPrefix:@"\uFEFF"])text=[text substringFromIndex:1];
     NSMutableDictionary<NSString*,NSString*> *headers=[NSMutableDictionary new];
     NSString *currentKey=nil;NSMutableString *currentVal=nil;
-    for(NSString *line in [text componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]){
-        if(!line.length)continue;
+    for(NSString *rawLine in [text componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]){
+        NSString *line=rawLine;
         if([line hasPrefix:@"\uFEFF"])line=[line substringFromIndex:1];
         if(!line.length)continue;
         if([line hasPrefix:@" "] && currentKey){[currentVal appendString:[line substringFromIndex:1]];continue;}
