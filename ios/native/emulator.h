@@ -8,7 +8,14 @@ typedef struct EmSurface {
     int width, height;
     uint32_t *pixels; /* straight alpha, 0xAARRGGBB */
     struct EmSurface *next;
+    uint64_t owner; /* Session generation, never reused during this process. */
 } EmSurface;
+typedef struct EmResourceStats {
+    uint64_t generation;
+    size_t surface_count, surface_bytes, queue_bytes;
+    int socket_count;
+} EmResourceStats;
+void em_tab_resource_stats(int tab_id, EmResourceStats *stats);
 
 int em_run(const char *bootstrap, const char *classpath, const char *jar,
            const char *rms, int width, int height);

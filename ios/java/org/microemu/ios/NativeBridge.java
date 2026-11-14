@@ -3,6 +3,12 @@ package org.microemu.ios;
 /** Native functions registered explicitly with the embedded interpreter. */
 public final class NativeBridge {
     private NativeBridge() { }
+    public static native String sha256File(String path);
+    public static native long beginSession(int tabId);
+    public static native void bindSession(long generation);
+    public static native boolean stopRequested(int tabId);
+    public static native int cancelSession(long generation);
+    public static native boolean releaseSession(long generation);
     public static native long create(int width, int height, int argb);
     public static native long decode(byte[] data, int offset, int length);
     public static native void release(long surface);

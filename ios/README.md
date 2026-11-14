@@ -58,6 +58,9 @@ cmake --build ios/build/host --parallel 3
 ctest --test-dir ios/build/host --output-on-failure
 python3 ios/tools/run_smoke.py --executable ios/build/host/microemu-headless
 python3 ios/tools/run_lifecycle_smoke.py --executable ios/build/host/microemu-headless
+python3 ios/tools/run_session_smoke.py --executable ios/build/host/microemu-headless
+python3 ios/tools/run_compatibility_smoke.py --executable ios/build/host/microemu-headless
+python3 ios/tools/run_ui_smoke.py --executable ios/build/host/microemu-headless
 ```
 
 Trên Windows dùng executable trong `ios/build/host/Release/microemu-headless.exe`. Có thể truyền `--runtime PATH` cho hai script đầu để dùng checkout miniJVM có sẵn, nhưng revision phải khớp pin.
@@ -109,7 +112,7 @@ Bản sửa tương thích bổ sung:
 - Chuẩn hóa lời gọi `invokevirtual` tới phương thức private của chính class, thường gặp trong JAR đã làm rối mã. Chỉ sửa bytecode trong bộ nhớ; không nới kiểm tra truy cập của JVM hay ghi lại JAR.
 - Tìm MIDlet qua chuỗi kế thừa khi JAR thiếu manifest, bỏ qua class abstract/interface.
 - Giữ vùng vẽ nội bộ độc lập với game override `getWidth()/getHeight()`.
-- Với JAR chỉ có thư mục tài nguyên `x1/`, giữ tỉ lệ màn hình và giới hạn vùng vẽ logic trong 153.600 pixel. Cách này còn giữ nguyên đường giải mã ảnh riêng của game. UIKit phóng framebuffer lên màn hình và dùng kích thước thật đó để đổi tọa độ chạm.
+- Mặc định giữ kích thước vùng vẽ được frontend yêu cầu. Lựa chọn `legacy-x1-budget` giới hạn 153.600 pixel chỉ được áp dụng khi cấu hình riêng của game yêu cầu; tên thư mục `x1/` không tự kích hoạt nó. UIKit dùng kích thước framebuffer thực tế để đổi tọa độ chạm.
 - Khi một ảnh chuẩn ở `x2/`, `x3/` hoặc `x4/` bị thiếu nhưng có bản ở mật độ khác, có thể đổi tỉ lệ bằng nearest-neighbor, giữ alpha.
 
 Đã kiểm tra khởi động trên host Windows với `HaiTacTiHon_124.jar`, `Dragonboy250 v6.0.jar`, `DragonBoy252.jar`, gồm đường chạy tab dùng trên iOS. Hai bản Dragonboy đã tải tài nguyên từ server, mở hộp nhập tài khoản và mật khẩu, nhận nội dung thử rồi vẽ tiếp; Stop trả `TAB_FINISHED result=0` và host thoát thành công. Chưa thực hiện đăng nhập/chơi đầy đủ hoặc chạy bản sửa trên iPhone.
@@ -132,3 +135,5 @@ Smoke test hiện có fixture cho lời gọi private, tableswitch/lookupswitch,
 Không giữ monitor của thiết bị khi gọi `MIDlet.paint`; cấp phát Java String từ hàng đợi input diễn ra sau khi nhả mutex native. Khi JVM hủy các luồng, vòng đọc socket kiểm tra cả `is_stop` để không chờ vô hạn ở server đang im lặng. Hai luồng stdout/stderr đều ghi nối tiếp vào Log để lỗi Java không bị ghi đè.
 
 `run_lifecycle_smoke.py` chạy trên interpreter thật: khóa giữa paint và luồng nạp ảnh, Stop khi TCP chưa có dữ liệu, nhập chữ trên hai tab trong lúc GC chạy, mở/nhận kết quả hai TextBox rồi vẽ tiếp, và Stop khi TextBox còn mở. Các kiểm thử này chạy trong GitHub Actions trước khi build IPA.
+
+Các thay đổi theo roadmap ngày 2026-11-14 và giới hạn kiểm chứng được ghi tại [implementation-status.md](docs/implementation-status.md). `run_session_smoke.py` thêm các callback bị chặn, vòng CPU/wait, context MIDlet con, input quá tải và 30 lần mở/dừng. `run_compatibility_smoke.py` kiểm tra profile/cache và dừng một tab trong khi tab khác tiếp tục dùng TCP. `run_ui_smoke.py` kiểm tra adapter LCDUI trên bộ vẽ chung.

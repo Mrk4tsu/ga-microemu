@@ -473,7 +473,10 @@ public class Display {
 		Display result;
 
 		if (MIDletBridge.getMIDletAccess(m).getDisplayAccess() == null) {
-			result = new Display();
+			org.microemu.MIDletContext previous = MIDletBridge.getMIDletContext();
+			MIDletBridge.setThreadMIDletContext(MIDletBridge.getMIDletContext(m));
+			try { result = new Display(); }
+			finally { MIDletBridge.setThreadMIDletContext(previous); }
 			MIDletBridge.getMIDletAccess(m).setDisplayAccess(result.accessor);
 		} else {
 			result = MIDletBridge.getMIDletAccess(m).getDisplayAccess().getDisplay();
@@ -563,6 +566,7 @@ public class Display {
 					// Andres Navarro
 					nextDisplayable.showNotify(Display.this);
 					Display.this.current = nextDisplayable;
+					MIDletBridge.activateDisplay(Display.this);
 
 					setScrollUp(false);
 					setScrollDown(false);

@@ -33,6 +33,11 @@ public final class IOSRecordStores implements RecordStoreManager {
         if (!directory.isDirectory()) throw new IllegalStateException("Cannot create RMS directory");
     }
     public String getName() { return "iOS persistent RMS"; }
+    /** Called only after all game threads have quiesced; writes are already persisted. */
+    void closeAll() {
+        for (Iterator i = stores.values().iterator(); i.hasNext();) ((Store)i.next()).setOpen(false);
+        stores.clear();
+    }
     private File file(String name) throws RecordStoreException {
         if (name == null || name.length() < 1 || name.length() > 32) throw new RecordStoreException("Invalid store name");
         StringBuffer encoded = new StringBuffer();

@@ -3,7 +3,6 @@ package org.microemu.ios;
 import java.io.*;
 import java.util.Enumeration;
 import java.util.Hashtable;
-import java.util.Vector;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 
@@ -12,7 +11,6 @@ final class IOSClassLoader extends ClassLoader {
     private final JarFile archive;
     private final Hashtable exactEntries = new Hashtable();
     private final Hashtable lowerEntries = new Hashtable();
-    private final Vector allEntries = new Vector();
 
     IOSClassLoader(File file, ClassLoader parent) throws IOException {
         super(parent);
@@ -23,7 +21,6 @@ final class IOSClassLoader extends ClassLoader {
                 while (en.hasMoreElements()) {
                     JarEntry entry = (JarEntry) en.nextElement();
                     String raw = entry.getName();
-                    allEntries.addElement(entry);
                     exactEntries.put(raw, entry);
                     String norm = normalize(raw);
                     if (!exactEntries.containsKey(norm)) {
@@ -59,34 +56,6 @@ final class IOSClassLoader extends ClassLoader {
         } catch (Throwable ignored) {
             return null;
         }
-    }
-
-    int[] compatibleViewport(int width, int height) {
-        boolean one = false, other = false;
-        for (int i = 0; i < allEntries.size(); i++) {
-            String name = normalize(((JarEntry)allEntries.elementAt(i)).getName()).toLowerCase();
-            if (name.startsWith("x1/")) one = true;
-            else if (name.startsWith("x2/") || name.startsWith("x3/") || name.startsWith("x4/")) other = true;
-        }
-        // Legacy packs containing only x1 assets may also encrypt their PNGs.
-        // Let the game decode its originals by staying within the x1 pixel budget.
-        // Preserve the screen aspect ratio; UIKit scales the completed framebuffer.
-        if (one && !other && (long)width * height > 480L * 320) {
-            double scale = Math.sqrt((480.0 * 320.0) / ((double)width * height));
-            width = Math.max(128, (int)(width * scale));
-            height = Math.max(128, (int)(height * scale));
-            if ((long)width * height > 480L * 320) height = (480 * 320) / width;
-            System.out.println("[JAR] x1-only assets: virtual resolution " + width + "x" + height);
-        }
-        return new int[]{width, height};
-    }
-
-    Vector getAllEntries() {
-        return allEntries;
-    }
-
-    JarFile getArchive() {
-        return archive;
     }
 
     protected Class findClass(String name) throws ClassNotFoundException {

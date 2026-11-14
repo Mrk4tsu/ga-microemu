@@ -48,6 +48,9 @@ jobs:
           ctest --test-dir ios/build/host --output-on-failure
           python3 ios/tools/run_smoke.py --executable ios/build/host/microemu-headless
           python3 ios/tools/run_lifecycle_smoke.py --executable ios/build/host/microemu-headless
+          python3 ios/tools/run_session_smoke.py --executable ios/build/host/microemu-headless
+          python3 ios/tools/run_compatibility_smoke.py --executable ios/build/host/microemu-headless
+          python3 ios/tools/run_ui_smoke.py --executable ios/build/host/microemu-headless
       - name: Generate Xcode project
         run: python3 ios/tools/generate_project.py
       - name: Build unsigned iPhone app

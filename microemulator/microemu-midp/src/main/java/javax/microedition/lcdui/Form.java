@@ -272,6 +272,7 @@ public class Form extends Screen
 
 		if (focusItemIndex < 0)
 			return;
+		items[focusItemIndex].setFocus(true);
 		int heightToItem = getHeightToItem(focusItemIndex);
 		int heightAfterItem = heightToItem + items[focusItemIndex].getHeight();
 		if (viewPortY > heightToItem) {

@@ -22,6 +22,13 @@ public final class IOSRuntime implements MicroEmulator, TabRunner {
     private volatile boolean destroyed;
     private volatile boolean sleeping;
     private volatile boolean stopped;
+    private long generation;
+    private volatile String workerError;
+    private volatile String state = "ANALYZING";
+    private final IOSInputSequence input = new IOSInputSequence();
+    private final Vector heldKeys = new Vector();
+    private boolean pointerDown;
+    private int pointerX, pointerY;
 
     public IOSRuntime() {
         this(0);
@@ -71,24 +78,79 @@ public final class IOSRuntime implements MicroEmulator, TabRunner {
 
     private void cleanup() {
         stopped = true;
+        if (generation != 0) {
+            if (!NativeBridge.releaseSession(generation)) throw new IllegalStateException("Session is still using resources");
+            generation = 0;
+        }
+        if (stores != null) stores.closeAll();
+        MIDletBridge.clear();
         if (loader != null) {
             loader.close();
             loader = null;
         }
     }
 
-    private void start(String jarPath, String rmsPath, int width, int height) throws Exception {
+    private void setState(String next) {
+        if ("STOPPING".equals(state) && !("STOPPED".equals(next) || "FAILED".equals(next) || "STOPPING".equals(next))) return;
+        state = next;
+        System.out.println("[SESSION] tab=" + tabId + " generation=" + generation + " state=" + next);
+    }
+
+    /** This host thread never executes code supplied by a game. */
+    private void start(final String jarPath, final String rmsPath, final int width, final int height) throws Exception {
+        generation = NativeBridge.beginSession(tabId);
+        setState("ANALYZING");
+        Thread worker = new Thread(new Runnable() {
+            public void run() {
+                NativeBridge.bindSession(generation);
+                try { runGame(jarPath, rmsPath, width, height); }
+                catch (Throwable error) {
+                    workerError = error.getClass().getName();
+                    running = false;
+                    // Throwable methods can be overridden by a game. Keep even
+                    // error reporting on the cancellable worker, never the host.
+                    error.printStackTrace();
+                }
+            }
+        }, "game-" + tabId);
+        worker.start();
+        while (running && !NativeBridge.stopRequested(tabId)) Thread.sleep(8);
+        setState("STOPPING");
+        NativeBridge.statusTab(tabId, "Stopping");
+        running = false;
+        // Give destroyApp a bounded chance to save state. All callbacks, including
+        // constructor/start/destroy, remain on cancellable game-owned threads.
+        long grace = System.currentTimeMillis() + 150;
+        while (worker.isAlive() && System.currentTimeMillis() < grace) Thread.sleep(8);
+        int active = NativeBridge.cancelSession(generation);
+        long reportAt = System.currentTimeMillis() + 2000;
+        while (active != 0 || worker.isAlive()) {
+            Thread.sleep(20);
+            active = NativeBridge.cancelSession(generation);
+            if (System.currentTimeMillis() >= reportAt) {
+                NativeBridge.statusTab(tabId, "Stopping: waiting for native operation");
+                reportAt = System.currentTimeMillis() + 5000;
+            }
+        }
+        cleanup();
+        if (workerError != null) {
+            setState("FAILED");
+            throw new RuntimeException(workerError);
+        }
+        setState("STOPPED");
+    }
+
+    private void runGame(String jarPath, String rmsPath, int width, int height) throws Exception {
         if (width < 128 || height < 128 || width > 1920 || height > 1920) throw new IllegalArgumentException("Invalid virtual resolution");
         File jarFile = new File(jarPath);
         if (!jarFile.exists() || jarFile.length() == 0) {
             throw new IOException("JAR file is missing or empty: " + jarPath);
         }
         loader = new IOSClassLoader(jarFile, IOSRuntime.class.getClassLoader());
-        InputStream manifest = locateManifest(loader, jarFile);
-        if (manifest != null) {
-            readManifest(manifest);
-        }
-        String className = resolveMainClassName(loader, jarFile);
+        setState("LOADING");
+        JarAnalyzer analysis = JarAnalyzer.analyze(jarFile, new File(rmsPath));
+        properties.putAll(analysis.properties);
+        String className = analysis.entryClass;
         if (className == null) {
             String mainClass = getAppProperty("Main-Class");
             if (mainClass != null && mainClass.trim().length() > 0) {
@@ -96,7 +158,7 @@ public final class IOSRuntime implements MicroEmulator, TabRunner {
             }
             throw new IOException("JAR has no MIDlet manifest or runnable MIDlet class");
         }
-        int[] viewport = loader.compatibleViewport(width, height);
+        int[] viewport = CompatibilityProfile.select(analysis, new File(rmsPath), width, height);
         width = viewport[0]; height = viewport[1];
         MIDletBridge.setMicroEmulator(this);
         device = new IOSDevice(this, width, height);
@@ -112,233 +174,25 @@ public final class IOSRuntime implements MicroEmulator, TabRunner {
         System.setProperty("microedition.encoding", "UTF-8");
         Thread.currentThread().setContextClassLoader(loader);
         MIDletBridge.setThreadMIDletContext(new MIDletContext());
+        setState("STARTING");
         midlet = (MIDlet)loader.loadClass(className).newInstance();
+        if (!running) return;
         MIDletBridge.setCurrentMIDlet(midlet);
         NativeBridge.statusTab(tabId, "Starting " + getSuiteName());
         midletAccess = MIDletBridge.getMIDletAccess(midlet);
         midletAccess.startApp();
+        setState("RUNNING");
         int[] event = new int[4];
         while (running) {
-            if (NativeBridge.pollTab(tabId, event) != 0) dispatch(event);
+            if (input.isPending()) { input.advance(); Thread.sleep(4); }
+            else if (NativeBridge.pollTab(tabId, event) != 0) dispatch(event);
             else Thread.sleep(sleeping ? 100 : 8);
         }
-        stopped = true;
         MIDletAccess access = midletAccess;
         if (access != null) {
             if (!destroyed) access.destroyApp(true);
             if (access.getDisplayAccess() != null) access.getDisplayAccess().clean();
-            Thread.sleep(100);
         }
-    }
-
-    private InputStream locateManifest(IOSClassLoader cl, File jarFile) {
-        String[] candidates = {
-            "META-INF/MANIFEST.MF",
-            "meta-inf/manifest.mf",
-            "META-INF/manifest.mf",
-            "Meta-inf/Manifest.mf",
-            "MANIFEST.MF",
-            "manifest.mf"
-        };
-        for (int i = 0; i < candidates.length; i++) {
-            InputStream in = cl.getResourceAsStream(candidates[i]);
-            if (in != null) return in;
-        }
-
-        Vector entries = cl.getAllEntries();
-        for (int i = 0; i < entries.size(); i++) {
-            java.util.jar.JarEntry entry = (java.util.jar.JarEntry) entries.elementAt(i);
-            String name = entry.getName().replace('\\', '/').toLowerCase();
-            if (name.endsWith("manifest.mf") || name.endsWith(".jad")) {
-                try {
-                    InputStream in = cl.getArchive().getInputStream(entry);
-                    if (in != null) return in;
-                } catch (Throwable ignored) { }
-            }
-        }
-
-        try {
-            String parent = jarFile.getParent();
-            String name = jarFile.getName();
-            int dot = name.lastIndexOf('.');
-            String base = dot > 0 ? name.substring(0, dot) : name;
-            File jad = new File(parent, base + ".jad");
-            if (jad.exists() && jad.length() > 0) {
-                return new FileInputStream(jad);
-            }
-            File jadUpper = new File(parent, base + ".JAD");
-            if (jadUpper.exists() && jadUpper.length() > 0) {
-                return new FileInputStream(jadUpper);
-            }
-        } catch (Throwable ignored) { }
-
-        return null;
-    }
-
-    private String resolveMainClassName(IOSClassLoader cl, File jarFile) {
-        for (int i = 1; i <= 9; i++) {
-            String entry = getAppProperty("MIDlet-" + i);
-            if (entry != null && entry.trim().length() > 0) {
-                entry = entry.trim();
-                int comma = entry.lastIndexOf(',');
-                String cls = comma >= 0 ? entry.substring(comma + 1).trim() : entry;
-                if (cls.length() > 0) return cls;
-            }
-        }
-
-        String autoClass = scanForMidletClass(cl);
-        if (autoClass != null) {
-            String suite = getAppProperty("MIDlet-Name");
-            if (suite == null) {
-                String fname = jarFile.getName();
-                int dot = fname.lastIndexOf('.');
-                String base = dot > 0 ? fname.substring(0, dot) : fname;
-                putProperty("MIDlet-Name", base);
-                putProperty("MIDlet-Vendor", "Auto");
-                putProperty("MIDlet-Version", "1.0");
-                putProperty("MIDlet-1", base + ",," + autoClass);
-            }
-            return autoClass;
-        }
-
-        return null;
-    }
-
-    private static String scanForMidletClass(IOSClassLoader cl) {
-        Vector entries = cl.getAllEntries(), candidates = new Vector();
-        Hashtable parents = new Hashtable();
-        for (int i = 0; i < entries.size(); i++) {
-            java.util.jar.JarEntry entry = (java.util.jar.JarEntry) entries.elementAt(i);
-            String name = entry.getName();
-            if (!name.endsWith(".class")) continue;
-            try {
-                InputStream in = cl.getArchive().getInputStream(entry);
-                if (in == null) continue;
-                byte[] data;
-                try {
-                    ByteArrayOutputStream out = new ByteArrayOutputStream();
-                    byte[] buf = new byte[2048]; int n;
-                    while ((n = in.read(buf)) != -1) if (n > 0) out.write(buf, 0, n);
-                    data = out.toByteArray();
-                } finally { in.close(); }
-                String[] parsed = parseClassHeader(data);
-                if (parsed != null) {
-                    parents.put(parsed[0], parsed[1]);
-                    int flags = Integer.parseInt(parsed[2]);
-                    if ((flags & 0x0601) == 1 && !name.startsWith("org/microemu/") && !name.startsWith("javax/"))
-                        candidates.addElement(parsed[0]);
-                }
-            } catch (IOException ignored) {
-            } catch (RuntimeException ignored) { }
-        }
-        for (int i = 0; i < candidates.size(); i++) {
-            String candidate = (String)candidates.elementAt(i), parent = candidate;
-            for (int depth = 0; parent != null && depth <= parents.size(); depth++) {
-                if ("javax/microedition/midlet/MIDlet".equals(parent)) return candidate.replace('/', '.');
-                parent = (String)parents.get(parent);
-            }
-        }
-        return null;
-    }
-
-    private static String[] parseClassHeader(byte[] data) {
-        if (data == null || data.length < 16) return null;
-        if ((data[0] & 0xFF) != 0xCA || (data[1] & 0xFF) != 0xFE || (data[2] & 0xFF) != 0xBA || (data[3] & 0xFF) != 0xBE) {
-            return null;
-        }
-        int count = ((data[8] & 0xFF) << 8) | (data[9] & 0xFF);
-        Object[] pool = new Object[count];
-        int offset = 10;
-        int index = 1;
-        while (index < count && offset < data.length) {
-            int tag = data[offset++] & 0xFF;
-            if (tag == 1) {
-                if (offset + 2 > data.length) return null;
-                int len = ((data[offset] & 0xFF) << 8) | (data[offset + 1] & 0xFF);
-                offset += 2;
-                if (offset + len > data.length) return null;
-                try {
-                    pool[index] = new String(data, offset, len, "UTF-8");
-                } catch (Exception e) {
-                    pool[index] = "";
-                }
-                offset += len;
-            } else if (tag == 3 || tag == 4) {
-                offset += 4;
-            } else if (tag == 5 || tag == 6) {
-                offset += 8;
-                index++;
-            } else if (tag == 7) {
-                if (offset + 2 > data.length) return null;
-                int nameIdx = ((data[offset] & 0xFF) << 8) | (data[offset + 1] & 0xFF);
-                offset += 2;
-                pool[index] = new Integer(nameIdx);
-            } else if (tag == 8 || tag == 16 || tag == 19 || tag == 20) {
-                offset += 2;
-            } else if (tag == 9 || tag == 10 || tag == 11 || tag == 12 || tag == 17 || tag == 18) {
-                offset += 4;
-            } else if (tag == 15) {
-                offset += 3;
-            } else {
-                return null;
-            }
-            index++;
-        }
-        if (offset + 6 > data.length) return null;
-        int accessFlags = ((data[offset] & 0xFF) << 8) | (data[offset + 1] & 0xFF);
-        offset += 2;
-        int thisClassIdx = ((data[offset] & 0xFF) << 8) | (data[offset + 1] & 0xFF);
-        offset += 2;
-        int superClassIdx = ((data[offset] & 0xFF) << 8) | (data[offset + 1] & 0xFF);
-
-        String thisClassName = resolveClassName(pool, thisClassIdx);
-        String superClassName = resolveClassName(pool, superClassIdx);
-        if (thisClassName != null && superClassName != null) {
-            return new String[] { thisClassName, superClassName, Integer.toString(accessFlags) };
-        }
-        return null;
-    }
-
-    private static String resolveClassName(Object[] pool, int classIndex) {
-        if (classIndex <= 0 || classIndex >= pool.length) return null;
-        Object entry = pool[classIndex];
-        if (entry instanceof Integer) {
-            int nameIdx = ((Integer) entry).intValue();
-            if (nameIdx > 0 && nameIdx < pool.length && pool[nameIdx] instanceof String) {
-                return (String) pool[nameIdx];
-            }
-        }
-        return null;
-    }
-
-    private void readManifest(InputStream in) throws IOException {
-        BufferedReader reader = new BufferedReader(new InputStreamReader(in, "UTF-8"));
-        String line, key = null; StringBuffer value = new StringBuffer();
-        boolean firstLine = true;
-        try {
-            while ((line = reader.readLine()) != null) {
-                if (firstLine) {
-                    firstLine = false;
-                    if (line.length() > 0 && line.charAt(0) == '\uFEFF') {
-                        line = line.substring(1);
-                    }
-                }
-                // Be tolerant of CRCRLF generated by old MIDlet build tools.
-                if (line.length() == 0) continue;
-                if (line.charAt(0) == ' ' && key != null) { value.append(line.substring(1)); continue; }
-                if (key != null) putProperty(key, value.toString());
-                int colon = line.indexOf(':');
-                key = colon > 0 ? line.substring(0, colon).trim() : null;
-                value = new StringBuffer(colon > 0 ? line.substring(colon + 1).trim() : "");
-            }
-            if (key != null) putProperty(key, value.toString());
-        } finally { reader.close(); }
-    }
-
-    private void putProperty(String key, String val) {
-        if (key == null) return;
-        properties.put(key, val);
-        properties.put(key.toLowerCase(), val);
     }
 
     private String suiteKey() throws Exception {
@@ -353,7 +207,9 @@ public final class IOSRuntime implements MicroEmulator, TabRunner {
     }
 
     private void dispatch(int[] event) throws Exception {
-        MIDletAccess access = midletAccess;
+        MIDlet active = MIDletBridge.getActiveMIDlet();
+        MIDletAccess access = active == null ? midletAccess : MIDletBridge.getMIDletAccess(active);
+        if (access == null) access = midletAccess;
         DisplayAccess display = access == null ? null : access.getDisplayAccess();
         if (event[0] == 10) { System.out.println("[LIFECYCLE] Stop requested tab=" + tabId); running = false; return; }
         if (event[0] == 15) {
@@ -371,31 +227,45 @@ public final class IOSRuntime implements MicroEmulator, TabRunner {
         if (display == null) return;
         switch (event[0]) {
             case 1:
+                if (event[1] == -5 && device.editFocusedField(display)) break;
                 if ((event[1] == -6 || event[1] == -7) && IOSUI.softKey(display, event[1] == -6 ? 0 : 1)) break;
+                Integer key = new Integer(event[1]);
+                if (!heldKeys.contains(key)) heldKeys.addElement(key);
                 display.keyPressed(event[1]); break;
-            case 2: display.keyReleased(event[1]); break;
-            case 3: display.keyRepeated(event[1]); break;
-            case 4: display.pointerPressed(event[1], event[2]); break;
-            case 5: display.pointerDragged(event[1], event[2]); break;
-            case 6: display.pointerReleased(event[1], event[2]); break;
-            case 7: IOSUI.commit(display, event[1], NativeBridge.takeTextTab(tabId)); break;
+            case 2:
+                if (heldKeys.removeElement(new Integer(event[1]))) display.keyReleased(event[1]); break;
+            case 3:
+                if (heldKeys.contains(new Integer(event[1]))) display.keyRepeated(event[1]); break;
+            case 4:
+                pointerDown = true; pointerX = event[1]; pointerY = event[2];
+                display.pointerPressed(pointerX, pointerY); break;
+            case 5:
+                pointerX = event[1]; pointerY = event[2];
+                if (pointerDown) display.pointerDragged(pointerX, pointerY); break;
+            case 6:
+                if (pointerDown) display.pointerReleased(event[1], event[2]); pointerDown = false; break;
+            case 7:
+                String value = NativeBridge.takeTextTab(tabId);
+                if (!device.commitFocusedField(display, event[1], value)) IOSUI.commit(display, event[1], value);
+                break;
             case 12:
                 String text = NativeBridge.takeTextTab(tabId);
                 Displayable target = display.getCurrent();
                 System.out.println("[INPUT] tab=" + tabId + " Text length=" + (text == null ? -1 : text.length()) + " screen=" + (target == null ? "null" : target.getClass().getName()));
-                if (text != null) for (int i = 0; i < text.length(); i++) {
-                    display.keyPressed(text.charAt(i));
-                    Thread.sleep(20);
-                    display.keyReleased(text.charAt(i));
-                    Thread.sleep(10);
-                }
+                if (target instanceof TextBox) IOSUI.commit(display, -1, text);
+                else input.text(display, text);
                 break;
             case 13:
+                if (event[1] == -5 && device.editFocusedField(display)) break;
                 if ((event[1] == -6 || event[1] == -7) && IOSUI.softKey(display, event[1] == -6 ? 0 : 1)) break;
-                display.keyPressed(event[1]);
-                Thread.sleep(40);
-                display.keyReleased(event[1]);
-                Thread.sleep(10);
+                input.tap(display, event[1]);
+                break;
+            case 16:
+                input.cancel();
+                for (int i = 0; i < heldKeys.size(); i++) display.keyReleased(((Integer)heldKeys.elementAt(i)).intValue());
+                heldKeys.removeAllElements();
+                if (pointerDown) display.pointerReleased(pointerX, pointerY);
+                pointerDown = false;
                 break;
         }
     }
@@ -417,7 +287,11 @@ public final class IOSRuntime implements MicroEmulator, TabRunner {
         }
         return loader.getResourceAsStream(name);
     }
-    public void notifyDestroyed(MIDletContext context) { destroyed = true; running = false; }
+    public void notifyDestroyed(MIDletContext context) {
+        if (context != null && (context.getMIDlet() == midlet || (midlet == null && context == MIDletBridge.getMIDletContext()))) {
+            destroyed = true; running = false;
+        }
+    }
     public void destroyMIDletContext(MIDletContext context) { }
     public int checkPermission(String permission) { return 1; }
     public boolean platformRequest(String url) { NativeBridge.browse(url); return false; }

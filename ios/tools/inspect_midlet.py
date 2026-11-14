@@ -9,7 +9,10 @@ import struct
 import zipfile
 
 
-def class_info(data):
+SCHEMA_VERSION = 1
+
+
+def class_info(data, include_header=False):
     if data[:4] != b"\xca\xfe\xba\xbe":
         raise ValueError("Invalid Java class")
     minor, major, count = struct.unpack_from(">HHH", data, 4)
@@ -48,6 +51,9 @@ def class_info(data):
             nt = pool[p[2]]
             members.add((owner, utf(nt[1]), utf(nt[2])))
     strings = {utf(p[1]) for p in pool if p and p[0] == 8}
+    if include_header:
+        flags, own, parent = struct.unpack_from(">HHH", data, offset)
+        return major, classes, members, strings, (utf(pool[own][1]), utf(pool[parent][1]) if parent else None, flags)
     return major, classes, members, strings
 
 
@@ -68,10 +74,12 @@ def inspect(path):
                 properties[key.strip()] = value.strip()
         internal = {n[:-6] for n in names if n.endswith(".class")}
         references, members, strings, versions = set(), set(), set(), collections.Counter()
+        headers = {}
         for name in names:
             if not name.endswith(".class"):
                 continue
-            major, refs, refs_members, literals = class_info(jar.read(name))
+            major, refs, refs_members, literals, header = class_info(jar.read(name), include_header=True)
+            headers[header[0]] = header
             references.update(refs)
             members.update(refs_members)
             strings.update(literals)
@@ -79,10 +87,24 @@ def inspect(path):
         external = sorted(n for n in references - internal if not n.startswith("["))
         external_members = sorted("%s.%s%s" % m for m in members if m[0] not in internal)
         endpoints = sorted(s for s in strings if re.search(r"https?://|socket://|\b(?:\d{1,3}\.){3}\d{1,3}\b", s))
+        candidates = []
+        for name, (_, parent, flags) in sorted(headers.items()):
+            if flags & 0x601 != 1: continue
+            visited = set()
+            while parent and parent not in visited:
+                if parent == "javax/microedition/midlet/MIDlet":
+                    candidates.append(name.replace("/", ".")); break
+                visited.add(parent)
+                parent = headers.get(parent, (None, None, 0))[1]
+        densities = sorted({n.replace("\\", "/").lstrip("/").lower().split("/")[0]
+                            for n in names if re.match(r"^/?x[1-4]/", n.replace("\\", "/"), re.I)})
         return {
+            "schema_version": SCHEMA_VERSION,
             "file": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
             "manifest": properties, "manifest_entry": manifest_name, "class_count": len(internal), "entry_count": len(names),
             "class_versions": dict(sorted(versions.items())), "external_classes": external,
+            "midlet_candidates": candidates, "resource_densities": densities,
+            "uses_reflection": any(n.startswith("java/lang/reflect/") for n in references),
             "external_members": external_members, "endpoint_literals": endpoints,
         }
 

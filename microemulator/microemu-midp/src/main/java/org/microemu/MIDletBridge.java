@@ -54,7 +54,7 @@ public class MIDletBridge {
 	
 	static Map /*<MIDlet, MIDletContext>*/ midletContexts = null;
 
-	static MIDlet currentMIDlet = null;
+	static volatile MIDlet currentMIDlet = null;
 
 	public static void setMicroEmulator(MicroEmulator emulator) {
 		MIDletBridge.emulator = emulator;
@@ -77,20 +77,21 @@ public class MIDletBridge {
 	
 	public static void registerMIDletAccess(MIDletAccess accessor) {
 		MIDletContext c = (MIDletContext)threadMIDletContexts.get();
-		if (c == null) {
+		if (c == null || c.getMIDletAccess() != null) {
 			//throw new Error("setThreadMIDletContext should be called");
 			c = new MIDletContext();
-			setThreadMIDletContext(c);
 		}
 		c.setMIDletAccess(accessor);
 		registerMIDletContext(c);
+		if (threadMIDletContexts.get() == null || ((MIDletContext)threadMIDletContexts.get()).getMIDletAccess() == null)
+			setThreadMIDletContext(c);
 	}
 	
-	public static void registerMIDletContext(MIDletContext midletContext) {
+	public static synchronized void registerMIDletContext(MIDletContext midletContext) {
 		midletContexts.put(midletContext.getMIDlet(), midletContext);
 	}
 
-	public static MIDletContext getMIDletContext(MIDlet midlet) {
+	public static synchronized MIDletContext getMIDletContext(MIDlet midlet) {
 		return (MIDletContext)midletContexts.get(midlet);
 	}
 	
@@ -104,6 +105,17 @@ public class MIDletBridge {
 
 	public static void setCurrentMIDlet(MIDlet midlet) {
 		currentMIDlet = midlet;
+	}
+
+	/** Foreground display owner, distinct from the callback's thread context. */
+	public static MIDlet getActiveMIDlet() { return currentMIDlet; }
+
+	public static synchronized void activateDisplay(javax.microedition.lcdui.Display display) {
+		for (Iterator i = midletContexts.values().iterator(); i.hasNext();) {
+			MIDletContext c = (MIDletContext)i.next();
+			DisplayAccess access = c.getMIDletAccess().getDisplayAccess();
+			if (access != null && access.getDisplay() == display) { currentMIDlet = c.getMIDlet(); return; }
+		}
 	}
 
 	public static MIDlet getCurrentMIDlet() {
@@ -123,7 +135,8 @@ public class MIDletBridge {
 	}
 
 	public static MIDletAccess getMIDletAccess(MIDlet midlet) {
-		return getMIDletContext(midlet).getMIDletAccess();
+		MIDletContext context = getMIDletContext(midlet);
+		return context == null ? null : context.getMIDletAccess();
 	}
 
 	
@@ -146,11 +159,18 @@ public class MIDletBridge {
 		destroyMIDletContext(midletContext);
 	}
 
-	public static void destroyMIDletContext(MIDletContext midletContext) {
+	public static void notifyDestroyed(MIDlet midlet) {
+		MIDletContext context = getMIDletContext(midlet);
+		emulator.notifyDestroyed(context);
+		destroyMIDletContext(context);
+	}
+
+	public static synchronized void destroyMIDletContext(MIDletContext midletContext) {
 		if (midletContext == null) {
 			return;
 		}
 		emulator.destroyMIDletContext(midletContext);
+		if (currentMIDlet == midletContext.getMIDlet()) currentMIDlet = null;
 		if (midletContexts.containsValue(midletContext)) {
 			for (Iterator i = midletContexts.entrySet().iterator(); i.hasNext();) {
 				Map.Entry entry = (Map.Entry) i.next();
@@ -170,9 +190,12 @@ public class MIDletBridge {
 		return emulator.platformRequest(URL);
 	}
 
-	public static void clear() {
+	public static synchronized void clear() {
+		if (midletContexts == null) return;
 		
 		currentMIDlet = null;
+		threadMIDletContexts.remove();
+		gameCanvasAccesses.clear();
 		
 		// Preserve only Launcher Context
 		for (Iterator i = midletContexts.entrySet().iterator(); i.hasNext();) {

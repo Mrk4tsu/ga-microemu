@@ -3,6 +3,7 @@
 import argparse
 from pathlib import Path
 import subprocess
+from runtime_patches import apply as apply_compatibility_patches
 
 REVISION = "76f904ea4008a8058db5155bf5ee2cfe94d19e60"
 IOS = Path(__file__).resolve().parents[1]
@@ -218,6 +219,7 @@ static mz_bool gemu_zip_reader_open(mz_zip_archive *archive, const char *jarpath
     new_c = "        if (classLoader == null) {\n            // A system class. MicroEmu: also check thread context class loader.\n            ClassLoader ccl = Thread.currentThread().getContextClassLoader();\n            if (ccl != null) {\n                java.io.InputStream in = ccl.getResourceAsStream(name);\n                if (in != null) return in;\n            }\n            return ClassLoader.getSystemResourceAsStream(name);\n        }"
     if old_c in ctext:
         class_file.write_text(ctext.replace(old_c, new_c, 1), encoding="utf-8")
+    apply_compatibility_patches(destination)
     return destination
 
 

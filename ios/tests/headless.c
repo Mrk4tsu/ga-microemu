@@ -14,6 +14,12 @@ static double started, stop_after = 20, last_frame, multi_sleep_at;
 static int frames, stopped;
 static int multi_tab, multi_stage, tab_frames[8], tab_finished[8];
 static int host_mode, stress_sent;
+static int session_repeats = 1, session_completed, resource_failure;
+static const char *repeat_jar, *repeat_rms;
+static int host_width = 348, host_height = 440;
+static double stop_armed_at;
+static double schedule_origin;
+static int isolation_frames_at_stop = -1;
 static double stress_scanned;
 static mtx_t host_lock;
 static once_flag host_lock_once = ONCE_FLAG_INIT;
@@ -63,6 +69,20 @@ void em_platform_present(int tab_id, const EmSurface *s) {
     int write_frame = frame_path && now - last_frame >= 1;
     if (write_frame) last_frame = now;
     mtx_unlock(&host_lock);
+    if (getenv("MICROEMU_LONG_INPUT") && !stress_sent) {
+        stress_sent = 1;
+        char text[501]; memset(text, 'z', 500); text[500] = 0;
+        em_tab_event(tab_id, 12, 0, 0, 0, text);
+    }
+    if (getenv("MICROEMU_QUEUE_FLOOD") && !stress_sent) {
+        stress_sent = 1;
+        for (int i = 0; i < 1000; i++) {
+            em_tab_event(tab_id, 1, 'z', 0, 0, NULL);
+            em_tab_event(tab_id, 2, 'z', 0, 0, NULL);
+        }
+        em_tab_event(tab_id, 1, 'q', 0, 0, NULL);
+        em_tab_event(tab_id, 2, 'q', 0, 0, NULL);
+    }
     if (!write_frame) return;
     unsigned char *rgba = malloc((size_t)s->width * s->height * 4);
     if (!rgba) return;
@@ -73,7 +93,18 @@ void em_platform_present(int tab_id, const EmSurface *s) {
     stbi_write_png(frame_path, s->width, s->height, 4, rgba, s->width * 4);
     free(rgba);
 }
-void em_platform_status(int tab_id, const char *s) { printf("[STATUS tab=%d] %s\n", tab_id, s); fflush(stdout); }
+void em_platform_status(int tab_id, const char *s) {
+    printf("[STATUS tab=%d] %s\n", tab_id, s); fflush(stdout);
+    call_once(&host_lock_once, init_host_lock);
+    mtx_lock(&host_lock);
+    if (getenv("MICROEMU_STOP_ON_STATUS") && !strcmp(s, "SESSION_ARM")) stop_armed_at = seconds();
+    if (getenv("MICROEMU_SCHEDULE_ON_STATUS") && !strcmp(s, "UI_ARM_SCHEDULE")) schedule_origin = seconds();
+    mtx_unlock(&host_lock);
+    if (getenv("MICROEMU_NESTED_ROUTING")) {
+        if (!strcmp(s, "ROUTE_A_READY")) em_tab_event(1, 13, 'a', 0, 0, NULL);
+        if (!strcmp(s, "ROUTE_B_READY")) em_tab_event(1, 13, 'b', 0, 0, NULL);
+    }
+}
 void em_platform_modal(int tab_id, const char *t, const char *v, int max, int constraints, const char **labels, int count) {
     if (!t) return;
     printf("[MODAL tab=%d] %s (%d commands)", tab_id, t, count);
@@ -100,8 +131,17 @@ void em_platform_tab_finished(int tab_id, int result) {
     mtx_lock(&host_lock);
     if (tab_id >= 0 && tab_id < 8) tab_finished[tab_id] = result == 0 ? 1 : -1;
     printf("[TAB_FINISHED tab=%d result=%d]\n", tab_id, result);
+    if (getenv("MICROEMU_SECOND_JAR") && tab_id == 1) isolation_frames_at_stop = tab_frames[2];
+    EmResourceStats stats;
+    em_tab_resource_stats(tab_id, &stats);
+    printf("[RESOURCES tab=%d generation=%llu surfaces=%zu bytes=%zu tcp_sockets=%d queue=%zu]\n", tab_id,
+        (unsigned long long)stats.generation, stats.surface_count, stats.surface_bytes, stats.socket_count, stats.queue_bytes);
+    if (stats.surface_count || stats.surface_bytes || stats.socket_count || stats.queue_bytes) resource_failure = 1;
     if (host_mode && tab_id == 1) {
-        stopped = 1; em_host_shutdown();
+        session_completed++;
+        if (session_completed < session_repeats && result == 0 && !resource_failure) {
+            em_host_open_tab(1, repeat_jar, repeat_rms, host_width, host_height);
+        } else { stopped = 1; em_host_shutdown(); }
     }
     if (multi_tab && tab_finished[1] && tab_finished[2] && !stopped) {
         stopped = 1;
@@ -113,6 +153,16 @@ void em_platform_browse(const char *s) { printf("[BROWSE] %s\n", s); }
 void em_platform_vibrate(int ms) { }
 void em_platform_tick(void) {
     double elapsed = (seconds() - started) * 1000;
+    call_once(&host_lock_once, init_host_lock);
+    mtx_lock(&host_lock);
+    int request_stop = stop_armed_at && seconds() - stop_armed_at >= 0.2;
+    if (request_stop) stop_armed_at = 0;
+    double origin = schedule_origin;
+    mtx_unlock(&host_lock);
+    if (request_stop) {
+        printf("[STOP_REQUEST elapsed=%.3f]\n", elapsed / 1000);
+        em_host_close_tab(1);
+    }
     const char *control = getenv("MICROEMU_CONTROL_FILE");
     if (control && elapsed - control_scanned >= 100) {
         control_scanned = elapsed; FILE *file = fopen(control, "r");
@@ -130,11 +180,12 @@ void em_platform_tick(void) {
             control_offset = ftell(file); fclose(file);
         }
     }
-    while (next_event < scheduled && elapsed >= schedule[next_event].ms) {
+    double scheduled_elapsed = getenv("MICROEMU_SCHEDULE_ON_STATUS") ? (origin ? (seconds() - origin) * 1000 : -1) : elapsed;
+    while (next_event < scheduled && scheduled_elapsed >= schedule[next_event].ms) {
         Scheduled *e = &schedule[next_event++];
         test_event(e->type, e->a, e->b, 0, NULL);
     }
-    if (multi_tab) {
+    if (multi_tab && !getenv("MICROEMU_SECOND_JAR")) {
         int action = 0;
         call_once(&host_lock_once, init_host_lock);
         mtx_lock(&host_lock);
@@ -201,12 +252,18 @@ int main(int argc, char **argv) {
     }
     if (getenv("MICROEMU_HOST_MODE")) {
         host_mode = 1;
+        const char *repeat_count = getenv("MICROEMU_SESSION_REPEATS");
+        session_repeats = repeat_count ? atoi(repeat_count) : 1;
+        if (session_repeats < 1 || session_repeats > 50) return 2;
+        repeat_jar = argv[3]; repeat_rms = argv[4];
+        if (getenv("MICROEMU_TEST_WIDTH")) host_width = atoi(getenv("MICROEMU_TEST_WIDTH"));
+        if (getenv("MICROEMU_TEST_HEIGHT")) host_height = atoi(getenv("MICROEMU_TEST_HEIGHT"));
         started = seconds(); em_reset_events();
-        em_host_open_tab(1, argv[3], argv[4], 348, 440);
+        em_host_open_tab(1, argv[3], argv[4], host_width, host_height);
         int result = em_host_run(argv[1], argv[2]);
         printf("[HOST] result=%d frames=%d finished=%d\n", result, frames, tab_finished[1]);
         free(font_data);
-        return result ? result : (tab_finished[1] == 1 && frames > 0 ? 0 : 3);
+        return result ? result : (!resource_failure && session_completed == session_repeats && tab_finished[1] == 1 && (frames > 0 || getenv("MICROEMU_ALLOW_NO_FRAME")) ? 0 : 3);
     }
     if (getenv("MICROEMU_MULTI_TAB")) {
         multi_tab = 1;
@@ -216,12 +273,14 @@ int main(int argc, char **argv) {
         snprintf(rms1, sizeof(rms1), "%s/tab1", argv[4]);
         snprintf(rms2, sizeof(rms2), "%s/tab2", argv[4]);
         em_host_open_tab(1, argv[3], rms1, 390, 460);
-        em_host_open_tab(2, argv[3], rms2, 390, 460);
+        const char *second_jar = getenv("MICROEMU_SECOND_JAR");
+        em_host_open_tab(2, second_jar ? second_jar : argv[3], rms2, 390, 460);
         int result = em_host_run(argv[1], argv[2]);
         printf("[MULTI_TAB] result=%d tab1_frames=%d tab2_frames=%d tab1_done=%d tab2_done=%d\n",
                result, tab_frames[1], tab_frames[2], tab_finished[1], tab_finished[2]);
         free(font_data);
-        if (result || tab_finished[1] != 1 || tab_finished[2] != 1 || tab_frames[1] == 0 || tab_frames[2] == 0) return result ? result : 3;
+        if (result || resource_failure || tab_finished[1] != 1 || tab_finished[2] != 1 || tab_frames[1] == 0 || tab_frames[2] == 0) return result ? result : 3;
+        if (second_jar && (isolation_frames_at_stop < 0 || tab_frames[2] <= isolation_frames_at_stop)) return 4;
         return 0;
     }
     const char *repeat = getenv("MICROEMU_TEST_REPEATS");

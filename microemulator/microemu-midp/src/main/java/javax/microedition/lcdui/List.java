@@ -249,7 +249,7 @@ public class List extends Screen implements Choice {
             if (releasedItem != -1) {
                 if (releasedItem == initialPressedItem && super.getCommandListener() != null
                         && choiceGroup.choiceType == Choice.IMPLICIT) {
-                	MIDletBridge.getMIDletAccess().getDisplayAccess().commandAction(SELECT_COMMAND, this);
+                    MIDletBridge.getMIDletAccess().getDisplayAccess().commandAction(selCommand, this);
                 }
             }
         }

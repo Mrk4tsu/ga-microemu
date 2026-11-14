@@ -20,7 +20,34 @@ final class IOSDevice implements Device, DeviceDisplay, FontManager {
     private final IOSUI ui = new IOSUI();
     private final Map properties = new HashMap();
     private final Map gameBuffers = new java.util.WeakHashMap();
-    private final InputMethod input = new InputMethod() {
+    private final IOSInput input = new IOSInput();
+    private final class IOSInput extends InputMethod {
+        private InputMethodListener editing;
+        private Displayable editingOwner;
+        boolean edit(org.microemu.DisplayAccess display) {
+            if (!(display.getCurrent() instanceof Form) || inputMethodListener == null) return false;
+            if ((inputMethodListener.getConstraints() & TextField.UNEDITABLE) != 0) return false;
+            editing = inputMethodListener; editingOwner = display.getCurrent();
+            NativeBridge.modalTab(runtime.tabId, editingOwner.getTitle(), editing.getText(), maxSize,
+                editing.getConstraints(), new String[]{"OK", "Cancel"});
+            return true;
+        }
+        boolean commit(org.microemu.DisplayAccess display, int index, String text) {
+            final InputMethodListener target = editing;
+            Displayable owner = editingOwner;
+            editing = null; editingOwner = null;
+            if (target == null) return false;
+            NativeBridge.modalTab(runtime.tabId, null, null, 0, 0, new String[0]);
+            if (index == 0 && text != null && owner == display.getCurrent() && target == inputMethodListener) {
+                final String value = text.length() > maxSize ? text.substring(0, maxSize) : text;
+                if (InputMethod.validate(value, target.getConstraints())) {
+                    display.getDisplay().callSerially(new Runnable() { public void run() {
+                        target.inputMethodTextChanged(new InputMethodEvent(InputMethodEvent.INPUT_METHOD_TEXT_CHANGED, value.length(), value));
+                    }});
+                }
+            }
+            return true;
+        }
         public void dispose() { }
         public int getGameAction(int code) {
             switch (code) {
@@ -46,7 +73,9 @@ final class IOSDevice implements Device, DeviceDisplay, FontManager {
             }
         }
         public String getKeyName(int code) { return code >= 32 ? String.valueOf((char)code) : "Key " + code; }
-    };
+    }
+    boolean editFocusedField(org.microemu.DisplayAccess display) { return input.edit(display); }
+    boolean commitFocusedField(org.microemu.DisplayAccess display, int index, String text) { return input.commit(display, index, text); }
     IOSDevice(IOSRuntime runtime, int width, int height) {
         this.runtime = runtime;
         this.width = width; this.height = height;

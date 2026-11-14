@@ -46,15 +46,23 @@ public abstract class MIDlet {
 		}
 
 		public void startApp() throws MIDletStateChangeException {
-			MIDletBridge.setCurrentMIDlet(midlet);
-			midlet.startApp();
+			org.microemu.MIDletContext previous = MIDletBridge.getMIDletContext();
+			MIDletBridge.setThreadMIDletContext(MIDletBridge.getMIDletContext(midlet));
+			try { MIDletBridge.setCurrentMIDlet(midlet); midlet.startApp(); }
+			finally { MIDletBridge.setThreadMIDletContext(previous); }
 		}
 
 		public void pauseApp() {
-			midlet.pauseApp();
+			org.microemu.MIDletContext previous = MIDletBridge.getMIDletContext();
+			MIDletBridge.setThreadMIDletContext(MIDletBridge.getMIDletContext(midlet));
+			try { midlet.pauseApp(); }
+			finally { MIDletBridge.setThreadMIDletContext(previous); }
 		}
 
 		public void destroyApp(boolean unconditional) throws MIDletStateChangeException {
+			org.microemu.MIDletContext previous = MIDletBridge.getMIDletContext();
+			MIDletBridge.setThreadMIDletContext(MIDletBridge.getMIDletContext(midlet));
+			try {
 			if (!midlet.destroyed) {
 				midlet.destroyApp(unconditional);
 			}
@@ -64,6 +72,7 @@ public abstract class MIDlet {
 				setDisplayAccess(null);
 			}
 			MIDletBridge.destroyMIDletContext(MIDletBridge.getMIDletContext(midlet));
+			} finally { MIDletBridge.setThreadMIDletContext(previous); }
 		}
 	}
 
@@ -90,7 +99,7 @@ public abstract class MIDlet {
 
 	public final void notifyDestroyed() {
 		destroyed = true;
-		MIDletBridge.notifyDestroyed();
+		MIDletBridge.notifyDestroyed(this);
 	}
 
 	public final void notifyPaused() {
