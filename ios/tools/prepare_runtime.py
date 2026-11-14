@@ -196,7 +196,18 @@ static mz_bool gemu_zip_reader_open(mz_zip_archive *archive, const char *jarpath
         ztext = before_save + in_save + after_save
         if ztext.count("gemu_zip_reader_open(&zipArchive, jarpath)") != 7:
             raise RuntimeError("Unexpected zip reader replacement count in miniz_wrapper.c")
+        old_locate = "        file_index = mz_zip_reader_locate_file(&zipArchive, filename, NULL, MZ_ZIP_FLAG_CASE_SENSITIVE);"
+        new_locate = "        file_index = mz_zip_reader_locate_file(&zipArchive, filename, NULL, MZ_ZIP_FLAG_CASE_SENSITIVE);\n        if (file_index < 0) file_index = mz_zip_reader_locate_file(&zipArchive, filename, NULL, 0);"
+        if old_locate in ztext:
+            ztext = ztext.replace(old_locate, new_locate)
         zipwrap.write_text(ztext, encoding="utf-8")
+    # System classes must check thread context class loader in Class.getResourceAsStream()
+    class_file = destination / "minijvm/java/src/main/java/java/lang/Class.java"
+    ctext = class_file.read_text(encoding="utf-8")
+    old_c = "        if (classLoader == null) {\n            // A system class.\n            return ClassLoader.getSystemResourceAsStream(name);\n        }"
+    new_c = "        if (classLoader == null) {\n            // A system class. MicroEmu: also check thread context class loader.\n            ClassLoader ccl = Thread.currentThread().getContextClassLoader();\n            if (ccl != null) {\n                java.io.InputStream in = ccl.getResourceAsStream(name);\n                if (in != null) return in;\n            }\n            return ClassLoader.getSystemResourceAsStream(name);\n        }"
+    if old_c in ctext:
+        class_file.write_text(ctext.replace(old_c, new_c, 1), encoding="utf-8")
     return destination
 
 

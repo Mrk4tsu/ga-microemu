@@ -79,13 +79,23 @@ public final class IOSRuntime implements MicroEmulator, TabRunner {
 
     private void start(String jarPath, String rmsPath, int width, int height) throws Exception {
         if (width < 128 || height < 128 || width > 1920 || height > 1920) throw new IllegalArgumentException("Invalid virtual resolution");
-        loader = new IOSClassLoader(new File(jarPath), IOSRuntime.class.getClassLoader());
-        InputStream manifest = loader.getResourceAsStream("META-INF/MANIFEST.MF");
-        if (manifest == null) throw new IOException("JAR has no MIDlet manifest");
-        readManifest(manifest);
-        String entry = getAppProperty("MIDlet-1");
-        if (entry == null || entry.lastIndexOf(',') < 0) throw new IOException("Missing MIDlet-1 entry");
-        String className = entry.substring(entry.lastIndexOf(',') + 1).trim();
+        File jarFile = new File(jarPath);
+        if (!jarFile.exists() || jarFile.length() == 0) {
+            throw new IOException("JAR file is missing or empty: " + jarPath);
+        }
+        loader = new IOSClassLoader(jarFile, IOSRuntime.class.getClassLoader());
+        InputStream manifest = locateManifest(loader, jarFile);
+        if (manifest != null) {
+            readManifest(manifest);
+        }
+        String className = resolveMainClassName(loader, jarFile);
+        if (className == null) {
+            String mainClass = getAppProperty("Main-Class");
+            if (mainClass != null && mainClass.trim().length() > 0) {
+                throw new IOException("Tệp JAR này là ứng dụng Java SE máy tính (Main-Class: " + mainClass.trim() + "), không phải game Java ME MIDlet");
+            }
+            throw new IOException("JAR has no MIDlet manifest or runnable MIDlet class");
+        }
         MIDletBridge.setMicroEmulator(this);
         device = new IOSDevice(this, width, height);
         DeviceFactory.setDevice(device);
@@ -118,31 +128,214 @@ public final class IOSRuntime implements MicroEmulator, TabRunner {
             Thread.sleep(100);
         }
     }
+
+    private InputStream locateManifest(IOSClassLoader cl, File jarFile) {
+        String[] candidates = {
+            "META-INF/MANIFEST.MF",
+            "meta-inf/manifest.mf",
+            "META-INF/manifest.mf",
+            "Meta-inf/Manifest.mf",
+            "MANIFEST.MF",
+            "manifest.mf"
+        };
+        for (int i = 0; i < candidates.length; i++) {
+            InputStream in = cl.getResourceAsStream(candidates[i]);
+            if (in != null) return in;
+        }
+
+        Vector entries = cl.getAllEntries();
+        for (int i = 0; i < entries.size(); i++) {
+            java.util.jar.JarEntry entry = (java.util.jar.JarEntry) entries.elementAt(i);
+            String name = entry.getName().replace('\\', '/').toLowerCase();
+            if (name.endsWith("manifest.mf") || name.endsWith(".jad")) {
+                try {
+                    InputStream in = cl.getArchive().getInputStream(entry);
+                    if (in != null) return in;
+                } catch (Throwable ignored) { }
+            }
+        }
+
+        try {
+            String parent = jarFile.getParent();
+            String name = jarFile.getName();
+            int dot = name.lastIndexOf('.');
+            String base = dot > 0 ? name.substring(0, dot) : name;
+            File jad = new File(parent, base + ".jad");
+            if (jad.exists() && jad.length() > 0) {
+                return new FileInputStream(jad);
+            }
+            File jadUpper = new File(parent, base + ".JAD");
+            if (jadUpper.exists() && jadUpper.length() > 0) {
+                return new FileInputStream(jadUpper);
+            }
+        } catch (Throwable ignored) { }
+
+        return null;
+    }
+
+    private String resolveMainClassName(IOSClassLoader cl, File jarFile) {
+        for (int i = 1; i <= 9; i++) {
+            String entry = getAppProperty("MIDlet-" + i);
+            if (entry != null && entry.trim().length() > 0) {
+                entry = entry.trim();
+                int comma = entry.lastIndexOf(',');
+                String cls = comma >= 0 ? entry.substring(comma + 1).trim() : entry;
+                if (cls.length() > 0) return cls;
+            }
+        }
+
+        String autoClass = scanForMidletClass(cl);
+        if (autoClass != null) {
+            String suite = getAppProperty("MIDlet-Name");
+            if (suite == null) {
+                String fname = jarFile.getName();
+                int dot = fname.lastIndexOf('.');
+                String base = dot > 0 ? fname.substring(0, dot) : fname;
+                putProperty("MIDlet-Name", base);
+                putProperty("MIDlet-Vendor", "Auto");
+                putProperty("MIDlet-Version", "1.0");
+                putProperty("MIDlet-1", base + ",," + autoClass);
+            }
+            return autoClass;
+        }
+
+        return null;
+    }
+
+    private static String scanForMidletClass(IOSClassLoader cl) {
+        Vector entries = cl.getAllEntries();
+        for (int i = 0; i < entries.size(); i++) {
+            java.util.jar.JarEntry entry = (java.util.jar.JarEntry) entries.elementAt(i);
+            String name = entry.getName();
+            if (!name.endsWith(".class") || name.startsWith("org/microemu/") || name.startsWith("javax/")) continue;
+            try {
+                InputStream in = cl.getArchive().getInputStream(entry);
+                if (in == null) continue;
+                ByteArrayOutputStream out = new ByteArrayOutputStream();
+                byte[] buf = new byte[2048];
+                int n;
+                while ((n = in.read(buf)) != -1) out.write(buf, 0, n);
+                in.close();
+                byte[] data = out.toByteArray();
+                String[] parsed = parseClassHeader(data);
+                if (parsed != null && "javax/microedition/midlet/MIDlet".equals(parsed[1])) {
+                    return parsed[0].replace('/', '.');
+                }
+            } catch (Throwable ignored) { }
+        }
+        return null;
+    }
+
+    private static String[] parseClassHeader(byte[] data) {
+        if (data == null || data.length < 16) return null;
+        if ((data[0] & 0xFF) != 0xCA || (data[1] & 0xFF) != 0xFE || (data[2] & 0xFF) != 0xBA || (data[3] & 0xFF) != 0xBE) {
+            return null;
+        }
+        int count = ((data[8] & 0xFF) << 8) | (data[9] & 0xFF);
+        Object[] pool = new Object[count];
+        int offset = 10;
+        int index = 1;
+        while (index < count && offset < data.length) {
+            int tag = data[offset++] & 0xFF;
+            if (tag == 1) {
+                if (offset + 2 > data.length) return null;
+                int len = ((data[offset] & 0xFF) << 8) | (data[offset + 1] & 0xFF);
+                offset += 2;
+                if (offset + len > data.length) return null;
+                try {
+                    pool[index] = new String(data, offset, len, "UTF-8");
+                } catch (Exception e) {
+                    pool[index] = "";
+                }
+                offset += len;
+            } else if (tag == 3 || tag == 4) {
+                offset += 4;
+            } else if (tag == 5 || tag == 6) {
+                offset += 8;
+                index++;
+            } else if (tag == 7) {
+                if (offset + 2 > data.length) return null;
+                int nameIdx = ((data[offset] & 0xFF) << 8) | (data[offset + 1] & 0xFF);
+                offset += 2;
+                pool[index] = new Integer(nameIdx);
+            } else if (tag == 8 || tag == 16 || tag == 19 || tag == 20) {
+                offset += 2;
+            } else if (tag == 9 || tag == 10 || tag == 11 || tag == 12 || tag == 17 || tag == 18) {
+                offset += 4;
+            } else if (tag == 15) {
+                offset += 3;
+            } else {
+                return null;
+            }
+            index++;
+        }
+        if (offset + 6 > data.length) return null;
+        offset += 2;
+        int thisClassIdx = ((data[offset] & 0xFF) << 8) | (data[offset + 1] & 0xFF);
+        offset += 2;
+        int superClassIdx = ((data[offset] & 0xFF) << 8) | (data[offset + 1] & 0xFF);
+
+        String thisClassName = resolveClassName(pool, thisClassIdx);
+        String superClassName = resolveClassName(pool, superClassIdx);
+        if (thisClassName != null && superClassName != null) {
+            return new String[] { thisClassName, superClassName };
+        }
+        return null;
+    }
+
+    private static String resolveClassName(Object[] pool, int classIndex) {
+        if (classIndex <= 0 || classIndex >= pool.length) return null;
+        Object entry = pool[classIndex];
+        if (entry instanceof Integer) {
+            int nameIdx = ((Integer) entry).intValue();
+            if (nameIdx > 0 && nameIdx < pool.length && pool[nameIdx] instanceof String) {
+                return (String) pool[nameIdx];
+            }
+        }
+        return null;
+    }
+
     private void readManifest(InputStream in) throws IOException {
         BufferedReader reader = new BufferedReader(new InputStreamReader(in, "UTF-8"));
         String line, key = null; StringBuffer value = new StringBuffer();
+        boolean firstLine = true;
         try {
             while ((line = reader.readLine()) != null) {
+                if (firstLine) {
+                    firstLine = false;
+                    if (line.length() > 0 && line.charAt(0) == '\uFEFF') {
+                        line = line.substring(1);
+                    }
+                }
                 // Be tolerant of CRCRLF generated by old MIDlet build tools.
                 if (line.length() == 0) continue;
                 if (line.charAt(0) == ' ' && key != null) { value.append(line.substring(1)); continue; }
-                if (key != null) properties.put(key, value.toString());
+                if (key != null) putProperty(key, value.toString());
                 int colon = line.indexOf(':');
-                key = colon > 0 ? line.substring(0, colon) : null;
+                key = colon > 0 ? line.substring(0, colon).trim() : null;
                 value = new StringBuffer(colon > 0 ? line.substring(colon + 1).trim() : "");
             }
-            if (key != null) properties.put(key, value.toString());
+            if (key != null) putProperty(key, value.toString());
         } finally { reader.close(); }
     }
+
+    private void putProperty(String key, String val) {
+        if (key == null) return;
+        properties.put(key, val);
+        properties.put(key.toLowerCase(), val);
+    }
+
     private String suiteKey() throws Exception {
         // This digest is a filesystem namespace, not an authentication primitive.
         java.security.MessageDigest hash = java.security.MessageDigest.getInstance("SHA-1");
-        hash.update((getAppProperty("MIDlet-Vendor") + "\n" + getSuiteName()).getBytes("UTF-8"));
+        String vendor = getAppProperty("MIDlet-Vendor");
+        hash.update(((vendor == null ? "null" : vendor) + "\n" + getSuiteName()).getBytes("UTF-8"));
         byte[] digest = hash.digest();
         StringBuffer key = new StringBuffer();
         for (int i = 0; i < digest.length; i++) { int b = digest[i] & 255; if (b < 16) key.append('0'); key.append(Integer.toHexString(b)); }
         return key.toString();
     }
+
     private void dispatch(int[] event) throws Exception {
         MIDletAccess access = midletAccess;
         DisplayAccess display = access == null ? null : access.getDisplayAccess();
@@ -192,7 +385,14 @@ public final class IOSRuntime implements MicroEmulator, TabRunner {
     }
     public RecordStoreManager getRecordStoreManager() { return stores; }
     public Launcher getLauncher() { return null; }
-    public String getAppProperty(String key) { return (String)properties.get(key); }
+    public String getAppProperty(String key) {
+        if (key == null) return null;
+        String val = (String) properties.get(key);
+        if (val == null) {
+            val = (String) properties.get(key.toLowerCase());
+        }
+        return val;
+    }
     public InputStream getResourceAsStream(Class originalClass, String name) {
         if (name.startsWith("/")) name = name.substring(1);
         else if (originalClass != null && !originalClass.getName().startsWith("org.microemu.")) {

@@ -178,12 +178,11 @@ int main(int argc, char **argv) {
     {
         void *mf = NULL;
         size_t mf_size = 0;
-        if (!em_jar_read_entry(argv[3], "/META-INF/MANIFEST.MF", &mf, &mf_size) || !mf || mf_size == 0) {
-            fprintf(stderr, "Failed to read manifest from JAR\n");
-            free(font_data);
-            return 4;
+        if (em_jar_read_manifest(argv[3], &mf, &mf_size) && mf && mf_size > 0) {
+            em_jar_free(mf);
+        } else {
+            fprintf(stderr, "[HEADLESS] Note: JAR has no manifest in archive; continuing with runtime auto-detection\n");
         }
-        em_jar_free(mf);
     }
     if (getenv("MICROEMU_MULTI_TAB")) {
         multi_tab = 1;

@@ -394,6 +394,58 @@ int em_jar_read_entry(const char *jar_path, const char *entry_name, void **out_d
     return 1;
 }
 
+static int em_case_ends_with(const char *str, const char *suffix) {
+    size_t slen = strlen(str);
+    size_t xlen = strlen(suffix);
+    if (slen < xlen) return 0;
+    const char *p = str + slen - xlen;
+    while (*p && *suffix) {
+        char a = (*p >= 'A' && *p <= 'Z') ? *p + 32 : *p;
+        char b = (*suffix >= 'A' && *suffix <= 'Z') ? *suffix + 32 : *suffix;
+        if (a != b) return 0;
+        p++; suffix++;
+    }
+    return 1;
+}
+
+int em_jar_read_manifest(const char *jar_path, void **out_data, size_t *out_size) {
+    if (out_data) *out_data = NULL;
+    if (out_size) *out_size = 0;
+    if (!jar_path || !out_data || !out_size) return 0;
+    if (em_jar_read_entry(jar_path, "META-INF/MANIFEST.MF", out_data, out_size)) return 1;
+    if (em_jar_read_entry(jar_path, "MANIFEST.MF", out_data, out_size)) return 1;
+    mz_zip_archive zip;
+    memset(&zip, 0, sizeof(zip));
+    if (!mz_zip_reader_init_file(&zip, jar_path, 0)) return 0;
+    int found_index = -1;
+    for (mz_uint i = 0; i < zip.m_total_files; i++) {
+        mz_zip_archive_file_stat st;
+        if (mz_zip_reader_file_stat(&zip, i, &st)) {
+            const char *fn = st.m_filename;
+            if (em_case_ends_with(fn, "manifest.mf")) {
+                found_index = (int)i;
+                break;
+            }
+            if (found_index < 0 && em_case_ends_with(fn, ".jad")) {
+                found_index = (int)i;
+            }
+        }
+    }
+    if (found_index >= 0) {
+        size_t size = 0;
+        void *data = mz_zip_reader_extract_to_heap(&zip, (mz_uint)found_index, &size, 0);
+        mz_zip_reader_end(&zip);
+        if (data) {
+            *out_data = data;
+            *out_size = size;
+            return 1;
+        }
+        return 0;
+    }
+    mz_zip_reader_end(&zip);
+    return 0;
+}
+
 void em_jar_free(void *data) {
     if (data) mz_free(data);
 }

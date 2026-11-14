@@ -91,7 +91,17 @@ static NSData *emReadJarEntry(NSURL *jarURL, NSString *entryName) {
     return data;
 }
 static NSDictionary<NSString*,NSString*> *emParseManifest(NSURL *jarURL) {
-    NSData *raw=emReadJarEntry(jarURL,@"META-INF/MANIFEST.MF");
+    if(!jarURL.path.length)return @{};
+    void *bytes=NULL;size_t size=0;
+    NSData *raw=nil;
+    if(em_jar_read_manifest(jarURL.path.fileSystemRepresentation,&bytes,&size) && bytes && size>0){
+        raw=[NSData dataWithBytes:bytes length:size];
+        em_jar_free(bytes);
+    }
+    if(!raw){
+        NSURL *jadURL=[[jarURL URLByDeletingPathExtension] URLByAppendingPathExtension:@"jad"];
+        raw=[NSData dataWithContentsOfURL:jadURL];
+    }
     if(!raw)return @{};
     NSString *text=[[NSString alloc] initWithData:raw encoding:NSUTF8StringEncoding]?:[[NSString alloc] initWithData:raw encoding:NSISOLatin1StringEncoding];
     if(!text)return @{};
@@ -99,15 +109,23 @@ static NSDictionary<NSString*,NSString*> *emParseManifest(NSURL *jarURL) {
     NSString *currentKey=nil;NSMutableString *currentVal=nil;
     for(NSString *line in [text componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]){
         if(!line.length)continue;
+        if([line hasPrefix:@"\uFEFF"])line=[line substringFromIndex:1];
+        if(!line.length)continue;
         if([line hasPrefix:@" "] && currentKey){[currentVal appendString:[line substringFromIndex:1]];continue;}
-        if(currentKey)headers[currentKey]=[currentVal copy];
+        if(currentKey){
+            headers[currentKey]=[currentVal copy];
+            headers[currentKey.lowercaseString]=[currentVal copy];
+        }
         NSRange colon=[line rangeOfString:@":"];
         if(colon.location!=NSNotFound && colon.location>0){
-            currentKey=[line substringToIndex:colon.location];
+            currentKey=[[line substringToIndex:colon.location] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
             currentVal=[[[line substringFromIndex:colon.location+1] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet] mutableCopy];
         } else {currentKey=nil;currentVal=nil;}
     }
-    if(currentKey)headers[currentKey]=[currentVal copy];
+    if(currentKey){
+        headers[currentKey]=[currentVal copy];
+        headers[currentKey.lowercaseString]=[currentVal copy];
+    }
     return headers;
 }
 static UIImage *emRenderSquareIcon(UIImage *source) {
@@ -143,9 +161,10 @@ static UIImage *emFallbackJarIcon(void) {
 }
 static UIImage *emIconFromJar(NSURL *jarURL, NSString **outSuiteName) {
     NSDictionary<NSString*,NSString*> *manifest=emParseManifest(jarURL);
-    if(outSuiteName)*outSuiteName=manifest[@"MIDlet-Name"]?:@"";
+    NSString *suite=manifest[@"MIDlet-Name"]?:manifest[@"midlet-name"]?:jarURL.lastPathComponent.stringByDeletingPathExtension;
+    if(outSuiteName)*outSuiteName=suite?:@"";
     NSMutableArray<NSString*> *candidates=[NSMutableArray new];
-    NSString *m1=manifest[@"MIDlet-1"];
+    NSString *m1=manifest[@"MIDlet-1"]?:manifest[@"midlet-1"];
     if(m1.length){
         NSArray<NSString*> *parts=[m1 componentsSeparatedByString:@","];
         if(parts.count>=2){
@@ -153,9 +172,10 @@ static UIImage *emIconFromJar(NSURL *jarURL, NSString **outSuiteName) {
             if(p.length)[candidates addObject:p];
         }
     }
-    NSString *mIcon=[manifest[@"MIDlet-Icon"] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+    NSString *mIcon=manifest[@"MIDlet-Icon"]?:manifest[@"midlet-icon"];
+    mIcon=[mIcon stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
     if(mIcon.length)[candidates addObject:mIcon];
-    [candidates addObjectsFromArray:@[@"icon.png",@"res/icon.png",@"icons/icon.png"]];
+    [candidates addObjectsFromArray:@[@"icon.png",@"res/icon.png",@"icons/icon.png",@"Icon.png"]];
     for(NSString *entry in candidates){
         NSData *data=emReadJarEntry(jarURL,entry);
         UIImage *decoded=data?[UIImage imageWithData:data]:nil;
@@ -165,10 +185,9 @@ static UIImage *emIconFromJar(NSURL *jarURL, NSString **outSuiteName) {
 }
 static NSString *emSuiteKeyForJar(NSURL *jarURL) {
     NSDictionary<NSString*,NSString*> *manifest=emParseManifest(jarURL);
-    if(!manifest.count)return nil;
-    NSString *vendor=manifest[@"MIDlet-Vendor"]?:@"null";
-    NSString *name=manifest[@"MIDlet-Name"]?:@"MIDlet";
-    NSString *input=[NSString stringWithFormat:@"%@\n%@",vendor,name];
+    NSString *vendor=manifest[@"MIDlet-Vendor"]?:manifest[@"midlet-vendor"]?:@"null";
+    NSString *name=manifest[@"MIDlet-Name"]?:manifest[@"midlet-name"]?:jarURL.lastPathComponent.stringByDeletingPathExtension;
+    NSString *input=[NSString stringWithFormat:@"%@\n%@",vendor,name?:@"MIDlet"];
     NSData *utf8=[input dataUsingEncoding:NSUTF8StringEncoding];
     if(!utf8)return nil;
     unsigned char digest[CC_SHA1_DIGEST_LENGTH];
