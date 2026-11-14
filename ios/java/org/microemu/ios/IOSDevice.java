@@ -88,23 +88,26 @@ final class IOSDevice implements Device, DeviceDisplay, FontManager {
     public void repaint(int x, int y, int w, int h) {
         if (runtime.isStopped()) return;
         if (runtime.isSleeping()) { runtime.sleepThrottle(); return; }
-        synchronized (this) {
-            MIDletAccess access = MIDletBridge.getMIDletAccess();
-            if (access != null && access.getDisplayAccess() != null) {
-                access.getDisplayAccess().paint(new IOSGraphics(screen));
-                NativeBridge.presentTab(runtime.tabId, screen.surface);
-            }
+        // MIDlet paint may acquire game locks or load resources. Never call it
+        // while holding an emulator monitor shared with image/input operations.
+        MIDletAccess access = MIDletBridge.getMIDletAccess();
+        if (access != null && access.getDisplayAccess() != null) {
+            access.getDisplayAccess().paint(new IOSGraphics(screen));
+            NativeBridge.presentTab(runtime.tabId, screen.surface);
         }
     }
-    synchronized void presentScreen() {
+    void presentScreen() {
         if (!runtime.isSleeping() && !runtime.isStopped()) NativeBridge.presentTab(runtime.tabId, screen.surface);
     }
     public Image createImage(int w, int h, boolean alpha, int fill) {
         return new IOSImage(NativeBridge.create(w, h, alpha ? fill : 0xff000000 | fill), true);
     }
     private int imageDiagnostics;
-    private synchronized void imageDiagnostic(String message) {
-        if (imageDiagnostics++ < 32) System.err.println("[JAR] " + message);
+    private final Object diagnosticLock = new Object();
+    private void imageDiagnostic(String message) {
+        boolean log;
+        synchronized (diagnosticLock) { log = imageDiagnostics++ < 32; }
+        if (log) System.err.println("[JAR] " + message);
     }
     public Image createImage(String name) throws IOException {
         InputStream in = runtime.getResourceAsStream(IOSRuntime.class, name);
@@ -191,11 +194,9 @@ final class IOSDevice implements Device, DeviceDisplay, FontManager {
     public void flushGraphics(GameCanvas canvas, int x, int y, int w, int h) {
         if (runtime.isStopped()) return;
         if (runtime.isSleeping()) { runtime.sleepThrottle(); return; }
-        synchronized (this) {
-            IOSGraphics graphics = new IOSGraphics(screen); graphics.setClip(x, y, w, h);
-            graphics.drawImage(gameBuffer(canvas), 0, 0, Graphics.TOP | Graphics.LEFT);
-            NativeBridge.presentTab(runtime.tabId, screen.surface);
-        }
+        IOSGraphics graphics = new IOSGraphics(screen); graphics.setClip(x, y, w, h);
+        graphics.drawImage(gameBuffer(canvas), 0, 0, Graphics.TOP | Graphics.LEFT);
+        NativeBridge.presentTab(runtime.tabId, screen.surface);
     }
     static int fontSize(Font font) { return font.getSize() == Font.SIZE_SMALL ? 12 : font.getSize() == Font.SIZE_LARGE ? 20 : 16; }
     public int charWidth(Font f, char c) { return stringWidth(f, String.valueOf(c)); }

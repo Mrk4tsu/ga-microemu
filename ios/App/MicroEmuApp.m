@@ -631,7 +631,10 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
     __weak GameController *weakSelf=self;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0), ^{
         @autoreleasepool {
-            freopen(log.fileSystemRepresentation,"w",stdout);freopen(log.fileSystemRepresentation,"a",stderr);setvbuf(stdout,NULL,_IOLBF,0);
+            FILE *freshLog=fopen(log.fileSystemRepresentation,"w");if(freshLog)fclose(freshLog);
+            // Both streams append: stdout must not overwrite an error appended by stderr.
+            freopen(log.fileSystemRepresentation,"a",stdout);freopen(log.fileSystemRepresentation,"a",stderr);
+            setvbuf(stdout,NULL,_IOLBF,0);setvbuf(stderr,NULL,_IOLBF,0);
             int result=bootstrap && emulator?em_host_run(bootstrap.fileSystemRepresentation,emulator.fileSystemRepresentation):-1;
             dispatch_async(dispatch_get_main_queue(), ^{
                 GameController *owner=weakSelf;

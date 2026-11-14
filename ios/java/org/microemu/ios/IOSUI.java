@@ -31,6 +31,17 @@ final class IOSUI implements UIFactory {
         CanvasView(Canvas owner) { super(owner); }
         public void showNotify() { NativeBridge.modalTab(IOSRuntime.currentTabId(), null, null, 0, 0, new String[0]); }
     }
+    /** The MIDP TextField model owns its value, constraints and raster rendering.
+     * TextBox also creates one internally before opening the native text editor. */
+    static final class FieldView implements TextFieldUI {
+        private final TextField field;
+        FieldView(TextField field) { this.field = field; }
+        public void setDefaultCommand(Command command) { }
+        public void setLabel(String label) { }
+        public void setConstraints(int constraints) { }
+        public void setString(String text) { field.setString(text); }
+        public String getString() { return field.getString(); }
+    }
     static final class TextView extends Base implements TextBoxUI {
         private String text = "";
         TextView(TextBox owner) { super(owner); }
@@ -106,5 +117,5 @@ final class IOSUI implements UIFactory {
     public DateFieldUI createDateFieldUI(DateField date) { return unsupported("DateField"); }
     public GaugeUI createGaugeUI(Gauge gauge) { return unsupported("Gauge"); }
     public ImageStringItemUI createImageStringItemUI(Item item) { return unsupported("Item"); }
-    public TextFieldUI createTextFieldUI(TextField field) { return unsupported("TextField"); }
+    public TextFieldUI createTextFieldUI(TextField field) { return new FieldView(field); }
 }

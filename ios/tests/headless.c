@@ -13,6 +13,8 @@ static const char *frame_path;
 static double started, stop_after = 20, last_frame, multi_sleep_at;
 static int frames, stopped;
 static int multi_tab, multi_stage, tab_frames[8], tab_finished[8];
+static int host_mode, stress_sent;
+static double stress_scanned;
 static mtx_t host_lock;
 static once_flag host_lock_once = ONCE_FLAG_INIT;
 static void init_host_lock(void) { mtx_init(&host_lock, mtx_plain); }
@@ -89,11 +91,18 @@ void em_platform_modal(int tab_id, const char *t, const char *v, int max, int co
         }
     }
 }
+static void test_event(int type, int a, int b, int c, const char *text) {
+    if (host_mode) em_tab_event(1, type, a, b, c, text);
+    else em_event(type, a, b, c, text);
+}
 void em_platform_tab_finished(int tab_id, int result) {
     call_once(&host_lock_once, init_host_lock);
     mtx_lock(&host_lock);
     if (tab_id >= 0 && tab_id < 8) tab_finished[tab_id] = result == 0 ? 1 : -1;
     printf("[TAB_FINISHED tab=%d result=%d]\n", tab_id, result);
+    if (host_mode && tab_id == 1) {
+        stopped = 1; em_host_shutdown();
+    }
     if (multi_tab && tab_finished[1] && tab_finished[2] && !stopped) {
         stopped = 1;
         em_host_shutdown();
@@ -114,7 +123,7 @@ void em_platform_tick(void) {
                 if (sscanf(line, "%d %d %d %d%n", &type, &a, &b, &c, &consumed) == 4) {
                     char *text = line + consumed; while (*text == ' ' || *text == '\t') text++;
                     text[strcspn(text, "\r\n")] = 0;
-                    em_event(type, a, b, c, (type == 7 || type == 12) ? text : NULL);
+                    test_event(type, a, b, c, (type == 7 || type == 12) ? text : NULL);
                 }
                 memset(line, 0, sizeof(line));
             }
@@ -123,7 +132,7 @@ void em_platform_tick(void) {
     }
     while (next_event < scheduled && elapsed >= schedule[next_event].ms) {
         Scheduled *e = &schedule[next_event++];
-        em_event(e->type, e->a, e->b, 0, NULL);
+        test_event(e->type, e->a, e->b, 0, NULL);
     }
     if (multi_tab) {
         int action = 0;
@@ -138,6 +147,11 @@ void em_platform_tick(void) {
             action = 2;
         }
         mtx_unlock(&host_lock);
+        if (getenv("MICROEMU_INPUT_STRESS") && multi_stage >= 2 && stress_sent < 48 && elapsed - stress_scanned >= 12) {
+            stress_scanned = elapsed; stress_sent++;
+            em_tab_event(1, 12, 0, 0, 0, "z");
+            em_tab_event(2, 12, 0, 0, 0, "z");
+        }
         if (action == 1) {
             em_host_sleep_tab(1, 1);
         } else if (action == 2) {
@@ -148,7 +162,8 @@ void em_platform_tick(void) {
     }
     if (!stopped && elapsed >= stop_after * 1000) {
         stopped = 1;
-        if (multi_tab) em_host_shutdown();
+        if (host_mode) em_host_close_tab(1);
+        else if (multi_tab) em_host_shutdown();
         else em_event(10, 0, 0, 0, NULL);
     }
 }
@@ -184,6 +199,15 @@ int main(int argc, char **argv) {
             fprintf(stderr, "[HEADLESS] Note: JAR has no manifest in archive; continuing with runtime auto-detection\n");
         }
     }
+    if (getenv("MICROEMU_HOST_MODE")) {
+        host_mode = 1;
+        started = seconds(); em_reset_events();
+        em_host_open_tab(1, argv[3], argv[4], 348, 440);
+        int result = em_host_run(argv[1], argv[2]);
+        printf("[HOST] result=%d frames=%d finished=%d\n", result, frames, tab_finished[1]);
+        free(font_data);
+        return result ? result : (tab_finished[1] == 1 && frames > 0 ? 0 : 3);
+    }
     if (getenv("MICROEMU_MULTI_TAB")) {
         multi_tab = 1;
         started = seconds();
@@ -209,7 +233,7 @@ int main(int argc, char **argv) {
         started = seconds(); em_reset_events();
         result = em_run(argv[1], argv[2], argv[3], argv[4], 480, 320);
         printf("[RESULT] status=%d frames=%d elapsed=%.2f interpreter-only=1 run=%d\n", result, frames, seconds() - started, i + 1);
-        if (result || !frames) { result = result ? result : 3; break; }
+        if (result || (!frames && !getenv("MICROEMU_ALLOW_NO_FRAME"))) { result = result ? result : 3; break; }
     }
     free(font_data);
     return result;

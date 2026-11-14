@@ -56,7 +56,17 @@ def prepare(destination):
     if logged not in text:
         if text.count(connect) != 1:
             raise RuntimeError("Network diagnostic patch no longer matches")
-        network.write_text(text.replace(connect, logged, 1), encoding="utf-8")
+        text = text.replace(connect, logged, 1)
+        network.write_text(text, encoding="utf-8")
+    # thread_stop_all sets is_stop, while the native receive loop used to
+    # check only is_interrupt. An idle online game's reader could pin teardown.
+    old_receive = "        if (runtime->thrd_info->is_interrupt) {\n            //vm waiting for destroy"
+    new_receive = "        if (runtime->thrd_info->is_interrupt || runtime->thrd_info->is_stop) {\n            // MicroEmu: cancel socket receive during JVM shutdown."
+    if new_receive not in text:
+        if text.count(old_receive) != 1:
+            raise RuntimeError("Socket shutdown compatibility patch no longer matches")
+        text = text.replace(old_receive, new_receive, 1)
+        network.write_text(text, encoding="utf-8")
     zipwrap = destination / "minijvm/c/utils/miniz_wrapper.c"
     ztext = zipwrap.read_text(encoding="utf-8")
     zmarker = "/* MicroEmu iOS: ChaCha20 encrypted runtime archive loader. */"

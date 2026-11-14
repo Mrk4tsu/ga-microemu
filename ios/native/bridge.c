@@ -269,34 +269,35 @@ static s32 poll_tab(Runtime *r, JClass *c) {
 static s32 take_text_for_tab(Runtime *r, int tab_id) {
     mtx_lock(&event_lock);
     TabQueue *q = queue_for(tab_id, 0);
-    Instance *text = (q && q->current_text) ? jstring_create_cstr(q->current_text, r) : NULL;
-    if (q) { free(q->current_text); q->current_text = NULL; }
+    char *owned = q ? q->current_text : NULL;
+    if (q) q->current_text = NULL;
     mtx_unlock(&event_lock);
+    /* Allocating a Java String may wait for GC. The UI/host poller must be
+       able to enter event_lock while this thread is at a GC safepoint. */
+    Instance *text = owned ? jstring_create_cstr(owned, r) : NULL;
     push_ref(r->stack, text);
+    free(owned);
     return 0;
 }
 static s32 take_text(Runtime *r, JClass *c) { return take_text_for_tab(r, 0); }
 static s32 take_text_tab(Runtime *r, JClass *c) { return take_text_for_tab(r, localvar_getInt(r->localvar, 0)); }
-static s32 take_tab_jar(Runtime *r, JClass *c) {
+static s32 take_launch_path(Runtime *r, int jar) {
     int tab_id = localvar_getInt(r->localvar, 0);
     mtx_lock(&event_lock);
     TabQueue *q = queue_for(tab_id, 0);
-    Instance *value = (q && q->launch_jar) ? jstring_create_cstr(q->launch_jar, r) : NULL;
-    if (q) { free(q->launch_jar); q->launch_jar = NULL; }
+    char *owned = q ? (jar ? q->launch_jar : q->launch_rms) : NULL;
+    if (q) {
+        if (jar) q->launch_jar = NULL;
+        else q->launch_rms = NULL;
+    }
     mtx_unlock(&event_lock);
+    Instance *value = owned ? jstring_create_cstr(owned, r) : NULL;
     push_ref(r->stack, value);
+    free(owned);
     return 0;
 }
-static s32 take_tab_rms(Runtime *r, JClass *c) {
-    int tab_id = localvar_getInt(r->localvar, 0);
-    mtx_lock(&event_lock);
-    TabQueue *q = queue_for(tab_id, 0);
-    Instance *value = (q && q->launch_rms) ? jstring_create_cstr(q->launch_rms, r) : NULL;
-    if (q) { free(q->launch_rms); q->launch_rms = NULL; }
-    mtx_unlock(&event_lock);
-    push_ref(r->stack, value);
-    return 0;
-}
+static s32 take_tab_jar(Runtime *r, JClass *c) { return take_launch_path(r, 1); }
+static s32 take_tab_rms(Runtime *r, JClass *c) { return take_launch_path(r, 0); }
 static void modal_for_tab(Runtime *r, int tab_id, int offset) {
     char *title = string_copy(r, localvar_getRefer(r->localvar, offset));
     char *value = string_copy(r, localvar_getRefer(r->localvar, offset + 1));

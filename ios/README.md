@@ -57,6 +57,7 @@ cmake -S ios -B ios/build/host -DCMAKE_BUILD_TYPE=Release
 cmake --build ios/build/host --parallel 3
 ctest --test-dir ios/build/host --output-on-failure
 python3 ios/tools/run_smoke.py --executable ios/build/host/microemu-headless
+python3 ios/tools/run_lifecycle_smoke.py --executable ios/build/host/microemu-headless
 ```
 
 Trên Windows dùng executable trong `ios/build/host/Release/microemu-headless.exe`. Có thể truyền `--runtime PATH` cho hai script đầu để dùng checkout miniJVM có sẵn, nhưng revision phải khớp pin.
@@ -111,9 +112,7 @@ Bản sửa tương thích bổ sung:
 - Với JAR chỉ có thư mục tài nguyên `x1/`, giữ tỉ lệ màn hình và giới hạn vùng vẽ logic trong 153.600 pixel. Cách này còn giữ nguyên đường giải mã ảnh riêng của game. UIKit phóng framebuffer lên màn hình và dùng kích thước thật đó để đổi tọa độ chạm.
 - Khi một ảnh chuẩn ở `x2/`, `x3/` hoặc `x4/` bị thiếu nhưng có bản ở mật độ khác, có thể đổi tỉ lệ bằng nearest-neighbor, giữ alpha.
 
-Đã kiểm tra khởi động trên host Windows với `HaiTacTiHon_124.jar`, `Dragonboy250 v6.0.jar`, `DragonBoy252.jar`, gồm đường chạy nhiều tab dùng trên iOS. Bản 250 trước đó lỗi `IllegalAccessError`; bản 252 thiếu manifest và thiếu bộ ảnh x2 khi dùng viewport dọc. Sau sửa, cả ba lên hình; hai bản Dragonboy có kết nối TCP thành công trong lần thử. Chưa xác nhận đăng nhập/chơi đầy đủ hoặc chạy bản sửa trên iPhone.
-
-Một số phiên thử game thật giữ kết nối khiến bước dừng toàn bộ JVM vượt thời gian chờ của harness. Đây không phải kết quả kiểm thử dừng thành công; việc đóng phiên online cần tiếp tục kiểm tra trên thiết bị.
+Đã kiểm tra khởi động trên host Windows với `HaiTacTiHon_124.jar`, `Dragonboy250 v6.0.jar`, `DragonBoy252.jar`, gồm đường chạy tab dùng trên iOS. Hai bản Dragonboy đã tải tài nguyên từ server, mở hộp nhập tài khoản và mật khẩu, nhận nội dung thử rồi vẽ tiếp; Stop trả `TAB_FINISHED result=0` và host thoát thành công. Chưa thực hiện đăng nhập/chơi đầy đủ hoặc chạy bản sửa trên iPhone.
 
 Sau khi cài cập nhật IPA, có thể chọn JAR trong Files hoặc dùng **Share/Open in → GaEmulator** từ trình duyệt. App sao chép file vào thư viện rồi mở game; nếu đang chơi thì mở tab mới, hoặc chuyển về tab đang chạy cùng file. File đã có cùng nội dung được dùng lại; file trùng tên nhưng khác nội dung được lưu riêng. Luồng này xử lý cả khi app chưa chạy và khi đang mở.
 
@@ -125,3 +124,11 @@ Kiểm tra trên iPhone sau build:
 4. Thử JAR trong iCloud Drive và một file rỗng/không đọc được; phải báo lỗi thay vì mở một game rỗng.
 
 Smoke test hiện có fixture cho lời gọi private, tableswitch/lookupswitch, Canvas override kích thước, ảnh đổi mật độ có alpha, MIDlet kế thừa không manifest, cùng các bài RMS/TCP/HTTP. Các trường hợp chạy một tab, nhiều tab và runtime mã hóa đều được kiểm tra.
+
+## Treo khi chọn input hoặc Stop
+
+`TextBox` của MIDP tạo `TextField` nội bộ. Backend iOS cung cấp adapter `TextFieldUI` để khởi tạo được model, giữ kiểm tra độ dài/ràng buộc của MIDP và mở trình nhập UIKit qua `TextBoxUI`. Trước đó `createTextFieldUI` ném `UnsupportedOperationException`, làm chết vòng lặp game khi chọn ô tài khoản/mật khẩu.
+
+Không giữ monitor của thiết bị khi gọi `MIDlet.paint`; cấp phát Java String từ hàng đợi input diễn ra sau khi nhả mutex native. Khi JVM hủy các luồng, vòng đọc socket kiểm tra cả `is_stop` để không chờ vô hạn ở server đang im lặng. Hai luồng stdout/stderr đều ghi nối tiếp vào Log để lỗi Java không bị ghi đè.
+
+`run_lifecycle_smoke.py` chạy trên interpreter thật: khóa giữa paint và luồng nạp ảnh, Stop khi TCP chưa có dữ liệu, nhập chữ trên hai tab trong lúc GC chạy, mở/nhận kết quả hai TextBox rồi vẽ tiếp, và Stop khi TextBox còn mở. Các kiểm thử này chạy trong GitHub Actions trước khi build IPA.
