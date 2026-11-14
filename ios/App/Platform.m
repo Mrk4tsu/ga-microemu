@@ -82,7 +82,9 @@ void em_platform_text(EmSurface *surface,const char *text,const int *args) {
             if(context){
                 CGContextSetGrayFillColor(context,1,1);CGContextSetTextPosition(context,0,height-args[14]);CTLineDraw(line,context);
                 for(int y=0;y<height;y++)for(int x=0;x<width;x++){
-                    uint32_t alpha=mask[(height-1-y)*width+x];
+                    // The bitmap buffer is already in image row order. Reversing
+                    // these rows mirrors CoreText glyphs vertically in the MIDP surface.
+                    uint32_t alpha=mask[y*width+x];
                     em_blend(surface,args[6]+x,args[7]+y,(alpha<<24)|(uint32_t)args[0],args+1);
                 }
                 if(args[15]&4)for(int x=0;x<width-2;x++)em_blend(surface,args[6]+x,args[7]+args[14]+1,0xff000000u|(uint32_t)args[0],args+1);
