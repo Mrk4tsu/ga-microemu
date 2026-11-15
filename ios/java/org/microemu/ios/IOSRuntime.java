@@ -234,7 +234,7 @@ public final class IOSRuntime implements MicroEmulator, TabRunner {
         if (event[0] == 15) {
             boolean nextSleep = event[1] != 0;
             sleeping = nextSleep;
-            EventDispatcher.maxFps = nextSleep ? 2 : 30;
+            EventDispatcher.maxFps = nextSleep ? 4 : 30;
             if (!nextSleep && display != null) {
                 if (device != null) device.presentScreen();
                 display.repaint();

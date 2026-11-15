@@ -308,13 +308,6 @@ static s32 draw(Runtime *r, JClass *c) {
     return 0;
 }
 static void present_for_tab(int tab_id, uint64_t surface_id) {
-    if (tab_id > 0) {
-        mtx_lock(&event_lock);
-        TabQueue *q = queue_for(tab_id, 0);
-        int asleep = q ? q->sleeping : 0;
-        mtx_unlock(&event_lock);
-        if (asleep) return;
-    }
     mtx_lock(&surface_lock);
     EmSurface *s = find_surface(surface_id);
     if (s) {

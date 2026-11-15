@@ -117,7 +117,6 @@ final class IOSDevice implements Device, DeviceDisplay, FontManager, PaintFailur
     public void setScrollUp(boolean value) { }
     public void repaint(int x, int y, int w, int h) {
         if (runtime.isStopped()) return;
-        if (runtime.isSleeping()) { runtime.sleepThrottle(); return; }
         // MIDlet paint may acquire game locks or load resources. Never call it
         // while holding an emulator monitor shared with image/input operations.
         MIDletAccess access = MIDletBridge.getMIDletAccess();
@@ -254,7 +253,7 @@ final class IOSDevice implements Device, DeviceDisplay, FontManager, PaintFailur
     public Graphics getGraphics(GameCanvas canvas) { return new IOSGraphics(gameBuffer(canvas)); }
     public void flushGraphics(GameCanvas canvas, int x, int y, int w, int h) {
         if (runtime.isStopped()) return;
-        if (runtime.isSleeping()) { runtime.sleepThrottle(); return; }
+        if (runtime.isSleeping()) runtime.sleepThrottle();
         IOSGraphics graphics = new IOSGraphics(screen); graphics.setClip(x, y, w, h);
         graphics.drawImage(gameBuffer(canvas), 0, 0, Graphics.TOP | Graphics.LEFT);
         NativeBridge.presentTab(runtime.tabId, screen.surface);

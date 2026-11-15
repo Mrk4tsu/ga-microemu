@@ -807,6 +807,7 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
         previous.sleeping=YES;
         if(!previous.finished)em_host_sleep_tab(previous.tabId,1);
     }
+    [self consumeFrameForTab:next];
     self.activeTabId=next.tabId;
     self.screen.tabId=next.tabId;
     self.screen.virtualWidth=next.virtualWidth;
