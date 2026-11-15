@@ -24,6 +24,7 @@ final class LegacyBytecode {
         if (n < 0) throw new IOException("Oversized class attribute");
         return n;
     }
+    /** Consumes the loader's private buffer; patches never modify a cached array or JAR. */
     static byte[] adapt(byte[] bytes) throws IOException {
         check(bytes, 0, 10);
         if (signedInt(bytes, 0) != 0xcafebabe) throw new IOException("Invalid class file");
@@ -93,8 +94,7 @@ final class LegacyBytecode {
                             int ref = u2(bytes, pc + 1);
                             if (ref < count && privateRefs[ref]) {
                                 if (adapted == null) {
-                                    adapted = new byte[bytes.length];
-                                    System.arraycopy(bytes, 0, adapted, 0, bytes.length);
+                                    adapted = bytes;
                                 }
                                 // Same receiver/stack effect and instruction length; offsets remain valid.
                                 adapted[pc] = (byte)0xb7;

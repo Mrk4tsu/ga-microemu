@@ -83,7 +83,7 @@ final class JarAnalyzer {
             JarEntry entry = (JarEntry)all.elementAt(i);
             String name = entry.getName().replace('\\', '/').toLowerCase();
             if ((pass == 0 && name.endsWith("manifest.mf")) || (pass == 1 && name.endsWith(".jad"))) {
-                try { return archive.getInputStream(entry); } catch (IOException ignored) { }
+                try { return ArchiveIO.open(archive,entry); } catch (IOException ignored) { }
             }
         }
 
@@ -142,19 +142,12 @@ final class JarAnalyzer {
             String name = entry.getName();
             if (!name.endsWith(".class")) continue;
             try {
-                InputStream in = archive.getInputStream(entry);
-                if (in == null) continue;
-                byte[] data;
-                try {
-                    ByteArrayOutputStream out = new ByteArrayOutputStream();
-                    byte[] buf = new byte[2048]; int n;
-                    while ((n = in.read(buf)) != -1) if (n > 0) out.write(buf, 0, n);
-                    data = out.toByteArray();
-                } finally { in.close(); }
-                String[] parsed = parseClassHeader(data);
+                InputStream input=ArchiveIO.open(archive,entry);
+                String[] parsed;
+                try { parsed=parseClassHeader(input); } finally { input.close(); }
                 if (parsed != null) {
                     classCount++;
-                    int major = ((data[6] & 255) << 8) | (data[7] & 255);
+                    int major = Integer.parseInt(parsed[3]);
                     maxClassVersion = Math.max(maxClassVersion, major);
                     parents.put(parsed[0], parsed[1]);
                     int flags = Integer.parseInt(parsed[2]);
@@ -174,60 +167,43 @@ final class JarAnalyzer {
         return null;
     }
 
-    private static String[] parseClassHeader(byte[] data) {
-        if (data == null || data.length < 16) return null;
-        if ((data[0] & 0xFF) != 0xCA || (data[1] & 0xFF) != 0xFE || (data[2] & 0xFF) != 0xBA || (data[3] & 0xFF) != 0xBE) {
-            return null;
-        }
-        int count = ((data[8] & 0xFF) << 8) | (data[9] & 0xFF);
+    private static String[] parseClassHeader(InputStream input) throws IOException {
+        DataInputStream data=new DataInputStream(input);
+        if(data.readInt()!=0xcafebabe)return null;
+        data.readUnsignedShort();int major=data.readUnsignedShort();
+        int count=data.readUnsignedShort();
         Object[] pool = new Object[count];
-        int offset = 10;
         int index = 1;
-        while (index < count && offset < data.length) {
-            int tag = data[offset++] & 0xFF;
+        while (index < count) {
+            int tag = data.readUnsignedByte();
             if (tag == 1) {
-                if (offset + 2 > data.length) return null;
-                int len = ((data[offset] & 0xFF) << 8) | (data[offset + 1] & 0xFF);
-                offset += 2;
-                if (offset + len > data.length) return null;
-                try {
-                    pool[index] = new String(data, offset, len, "UTF-8");
-                } catch (Exception e) {
-                    pool[index] = "";
-                }
-                offset += len;
+                byte[] utf=new byte[data.readUnsignedShort()];data.readFully(utf);
+                pool[index]=new String(utf,"UTF-8");
             } else if (tag == 3 || tag == 4) {
-                offset += 4;
+                data.readInt();
             } else if (tag == 5 || tag == 6) {
-                offset += 8;
+                data.readLong();
                 index++;
             } else if (tag == 7) {
-                if (offset + 2 > data.length) return null;
-                int nameIdx = ((data[offset] & 0xFF) << 8) | (data[offset + 1] & 0xFF);
-                offset += 2;
-                pool[index] = new Integer(nameIdx);
+                pool[index] = new Integer(data.readUnsignedShort());
             } else if (tag == 8 || tag == 16 || tag == 19 || tag == 20) {
-                offset += 2;
+                data.readUnsignedShort();
             } else if (tag == 9 || tag == 10 || tag == 11 || tag == 12 || tag == 17 || tag == 18) {
-                offset += 4;
+                data.readInt();
             } else if (tag == 15) {
-                offset += 3;
+                data.readUnsignedByte();data.readUnsignedShort();
             } else {
                 return null;
             }
             index++;
         }
-        if (offset + 6 > data.length) return null;
-        int accessFlags = ((data[offset] & 0xFF) << 8) | (data[offset + 1] & 0xFF);
-        offset += 2;
-        int thisClassIdx = ((data[offset] & 0xFF) << 8) | (data[offset + 1] & 0xFF);
-        offset += 2;
-        int superClassIdx = ((data[offset] & 0xFF) << 8) | (data[offset + 1] & 0xFF);
+        int accessFlags=data.readUnsignedShort();
+        int thisClassIdx=data.readUnsignedShort(),superClassIdx=data.readUnsignedShort();
 
         String thisClassName = resolveClassName(pool, thisClassIdx);
         String superClassName = resolveClassName(pool, superClassIdx);
         if (thisClassName != null && superClassName != null) {
-            return new String[] { thisClassName, superClassName, Integer.toString(accessFlags) };
+            return new String[] { thisClassName, superClassName, Integer.toString(accessFlags),Integer.toString(major) };
         }
         return null;
     }

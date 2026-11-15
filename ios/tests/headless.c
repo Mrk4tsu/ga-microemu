@@ -135,9 +135,9 @@ void em_platform_tab_finished(int tab_id, int result) {
     if (getenv("MICROEMU_SECOND_JAR") && tab_id == 1) isolation_frames_at_stop = tab_frames[2];
     EmResourceStats stats;
     em_tab_resource_stats(tab_id, &stats);
-    printf("[RESOURCES tab=%d generation=%llu surfaces=%zu bytes=%zu tcp_sockets=%d queue=%zu]\n", tab_id,
-        (unsigned long long)stats.generation, stats.surface_count, stats.surface_bytes, stats.socket_count, stats.queue_bytes);
-    if (stats.surface_count || stats.surface_bytes || stats.socket_count || stats.queue_bytes) resource_failure = 1;
+    printf("[RESOURCES tab=%d generation=%llu surfaces=%zu bytes=%zu tcp_sockets=%d queue=%zu zip_streams=%d]\n", tab_id,
+        (unsigned long long)stats.generation, stats.surface_count, stats.surface_bytes, stats.socket_count, stats.queue_bytes,stats.zip_count);
+    if (stats.surface_count || stats.surface_bytes || stats.socket_count || stats.queue_bytes || stats.zip_count) resource_failure = 1;
     if (host_mode && tab_id == 1) {
         session_completed++;
         if (session_completed < session_repeats && result == 0 && !resource_failure) {

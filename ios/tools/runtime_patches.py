@@ -12,6 +12,10 @@ def replace(path, old, new):
 
 
 def apply(runtime):
+    # Share the existing plain/encrypted archive opener with the bounded stream adapter.
+    replace(runtime / "minijvm/c/utils/miniz_wrapper.c",
+        "static mz_bool gemu_zip_reader_open(mz_zip_archive *archive, const char *jarpath) {",
+        "/* MicroEmu: shared streaming ZIP opener. */\nmz_bool gemu_zip_reader_open(mz_zip_archive *archive, const char *jarpath) {")
     java = runtime / "minijvm/java/src/main/java/java/lang"
     for signature in (
         "public Method getMethod(String name, Class<?>... parameterTypes) throws NoSuchMethodException {",

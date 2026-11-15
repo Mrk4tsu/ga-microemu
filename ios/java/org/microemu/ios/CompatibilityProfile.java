@@ -5,7 +5,7 @@ import java.util.Properties;
 
 /** Device choices only. Standard Java API fixes apply to every game. */
 final class CompatibilityProfile {
-    static final String RUNTIME_VERSION = "minijvm-76f904ea-microemu-1";
+    static final String RUNTIME_VERSION = "minijvm-76f904ea-microemu-2";
     static int[] select(JarAnalyzer jar, File dataDirectory, int width, int height) throws IOException {
         return select(jar, dataDirectory, width, height, false);
     }

@@ -20,7 +20,7 @@ typedef struct EmSurface {
 typedef struct EmResourceStats {
     uint64_t generation;
     size_t surface_count, surface_bytes, queue_bytes;
-    int socket_count;
+    int socket_count, zip_count;
 } EmResourceStats;
 void em_tab_resource_stats(int tab_id, EmResourceStats *stats);
 

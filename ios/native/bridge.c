@@ -20,7 +20,8 @@
 #endif
 
 static once_flag initialized = ONCE_FLAG_INIT;
-static mtx_t surface_lock, event_lock;
+static mtx_t surface_lock, event_lock, archive_lock;
+static int archive_count(uint64_t owner);
 static EmSurface *surfaces;
 static uint64_t next_surface = 1;
 static size_t surface_bytes;
@@ -56,6 +57,7 @@ static int execution_failed;
 static void initialize(void) {
     mtx_init(&surface_lock, mtx_plain);
     mtx_init(&event_lock, mtx_plain);
+    mtx_init(&archive_lock, mtx_plain);
     jvm_init_mem_alloc();
 }
 static char *copy_text(const char *text) {
@@ -195,6 +197,7 @@ void em_tab_resource_stats(int tab_id, EmResourceStats *stats) {
     }
     stats->socket_count = microemu_io_count(stats->generation);
     mtx_unlock(&surface_lock);
+    stats->zip_count = archive_count(stats->generation);
     mtx_lock(&event_lock);
     TabQueue *q = queue_for(tab_id, 0);
     if (q) stats->queue_bytes = q->text_bytes + (q->current_text ? strlen(q->current_text) + 1 : 0);
@@ -225,6 +228,7 @@ static char *string_copy(Runtime *r, Instance *value) {
     utf8_destroy(utf);
     return text;
 }
+#include "archive_io.inc"
 static s32 create(Runtime *r, JClass *c) {
     mtx_lock(&surface_lock);
     EmSurface *s = new_surface(r, localvar_getInt(r->localvar, 0), localvar_getInt(r->localvar, 1), localvar_getInt(r->localvar, 2));
@@ -555,6 +559,7 @@ static s32 release_session(Runtime *r, JClass *c) {
     uint64_t id = localvar_getLong(r->localvar, 0);
     if (session_threads(r, id, 0)) { push_int(r->stack, 0); return 0; }
     microemu_io_release(r->jvm, id);
+    archive_release(id, 0);
     mtx_lock(&surface_lock);
     EmSession *owner = find_session(id);
     if (owner) {
@@ -588,6 +593,10 @@ static s32 release_session(Runtime *r, JClass *c) {
 }
 #define METHOD(name,signature,fn) {"org/microemu/ios/NativeBridge",name,signature,fn}
 static java_native_method methods[] = {
+    METHOD("archiveOpen","(Ljava/lang/String;Ljava/lang/String;)J",archive_open_native),
+    METHOD("archiveRead","(J[BII)I",archive_read_native),METHOD("archiveRemaining","(J)J",archive_remaining_native),
+    METHOD("archiveRewind","(J)Z",archive_rewind_native),METHOD("archiveClose","(J)V",archive_close_native),
+    METHOD("archiveCount","()I",archive_count_native),
     METHOD("validViewport","(II)Z",valid_viewport),METHOD("userViewportTab","(I)Z",user_viewport_tab),
     METHOD("fullScreenTab","(I)Z",fullscreen_tab),METHOD("prepareViewportRetry","(I)V",prepare_viewport_retry),
     METHOD("firstFrameSeen","(J)Z",first_frame_seen),
@@ -726,6 +735,7 @@ static int run_jvm_entry(const char *boot, const char *classpath, const char *en
     if (result == RUNTIME_STATUS_ERROR && jvm->collector->exit_flag) result = jvm->collector->exit_code;
     /* JVM shutdown has joined its Java threads before destroying their heap. */
     jvm_destroy(jvm);
+    archive_release(0, 1);
     mtx_lock(&surface_lock);
     while (surfaces) { EmSurface *s = surfaces; surfaces = s->next; free(s->pixels); free(s); }
     surface_bytes = 0;

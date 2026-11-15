@@ -175,9 +175,9 @@ JNIEXPORT void JNICALL Java_com_gamod_gaemulator_NativeEngine_openTabWithViewpor
 }
 JNIEXPORT jlongArray JNICALL Java_com_gamod_gaemulator_NativeEngine_resources(JNIEnv *env, jclass cls, jint id) {
     EmResourceStats stats={0};em_tab_resource_stats(id,&stats);
-    jlong values[]={stats.generation,stats.surface_count,stats.surface_bytes,stats.socket_count,stats.queue_bytes};
-    jlongArray result=(*env)->NewLongArray(env,5);
-    if(result)(*env)->SetLongArrayRegion(env,result,0,5,values);
+    jlong values[]={stats.generation,stats.surface_count,stats.surface_bytes,stats.socket_count,stats.queue_bytes,stats.zip_count};
+    jlongArray result=(*env)->NewLongArray(env,6);
+    if(result)(*env)->SetLongArrayRegion(env,result,0,6,values);
     return result;
 }
 JNIEXPORT void JNICALL Java_com_gamod_gaemulator_NativeEngine_sleepTab(JNIEnv *env, jclass cls, jint id, jboolean sleep) { em_host_sleep_tab(id, sleep); }

@@ -66,6 +66,15 @@ public final class SmokeInstrumentation extends Instrumentation implements Nativ
             NativeEngine.sleepTab(5,false);waitFrame(5);
             require(NativeEngine.resources(5)[0]==peerGeneration,"Stop kept the neighbouring session alive");
             NativeEngine.closeTab(5);waitFinished(5);requireEmpty(5);
+            File memory=copy("memory.jar",directory),abandon=copy("memory-abandon.jar",directory);
+            NativeEngine.openTab(7,memory.getPath(),new File(directory,"memory-rms").getPath(),320,400);
+            waitArmed(7);
+            java.util.regex.Matcher retained=java.util.regex.Pattern.compile("MEMORY_RESULT before=\\d+ after=\\d+ retained=(-?\\d+)").matcher(read(assets.log));
+            require(retained.find() && Long.parseLong(retained.group(1))<4L*1024*1024,"Closed resource streams respect retained-memory budget");
+            NativeEngine.closeTab(7);waitFinished(7);requireEmpty(7);
+            NativeEngine.openTab(8,abandon.getPath(),new File(directory,"abandon-rms").getPath(),320,400);
+            waitArmed(8);require(NativeEngine.resources(8)[5]==8,"Eight abandoned ZIP streams are owned by session");
+            NativeEngine.closeTab(8);waitFinished(8);requireEmpty(8);
             NativeEngine.shutdown(); runtime.join(8000);
             require(!runtime.isAlive(),"Interpreter shutdown with idle socket");
             if(callbackFailure!=null) throw new AssertionError("Platform callback",callbackFailure);
@@ -110,7 +119,12 @@ public final class SmokeInstrumentation extends Instrumentation implements Nativ
     }
     private void requireEmpty(int tab) {
         long[] values=NativeEngine.resources(tab);
-        require(values.length==5 && values[1]==0 && values[2]==0 && values[3]==0 && values[4]==0,"Session resources reclaimed for tab "+tab);
+        require(values.length==6 && values[1]==0 && values[2]==0 && values[3]==0 && values[4]==0 && values[5]==0,"Session resources reclaimed for tab "+tab);
+    }
+    private void waitArmed(int tab) throws Exception {
+        long deadline=System.currentTimeMillis()+30000;
+        while(!"SESSION_ARM".equals(statuses.get(tab)) && System.currentTimeMillis()<deadline)Thread.sleep(30);
+        require("SESSION_ARM".equals(statuses.get(tab)),"Fixture ready for tab "+tab);
     }
     private void serve(Socket socket) {
         try(Socket client=socket) {

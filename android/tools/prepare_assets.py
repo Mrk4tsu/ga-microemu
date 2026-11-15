@@ -36,6 +36,7 @@ def main(runtime, javac):
         '-cp', str(ROOT / 'ios/Runtime/microemu-ios.jar'), '-d', str(classes),
         str(ROOT / 'android/tests/java/AndroidSmokeMIDlet.java'),
         str(ROOT / 'ios/tests/java/lifecycle/SocketStopMIDlet.java'),
+        str(ROOT / 'ios/tests/java/memory/MemoryMIDlet.java'),
         *map(str, sorted((ROOT / 'ios/tests/java/session').glob('*.java')))], check=True)
     tests = ROOT / 'android/app/build/generated/testAssets'
     tests.mkdir(parents=True, exist_ok=True)
@@ -43,11 +44,15 @@ def main(runtime, javac):
                              ('idle-socket', 'lifecycle.SocketStopMIDlet', ''),
                              ('full-screen', 'session.FullScreenMIDlet', 'normal'),
                              ('blocked', 'session.SessionMIDlet', 'start'),
-                             ('peer', 'session.SessionMIDlet', 'normal')]:
+                             ('peer', 'session.SessionMIDlet', 'normal'),
+                             ('memory', 'memory.MemoryMIDlet', 'resources'),
+                             ('memory-abandon', 'memory.MemoryMIDlet', 'abandon')]:
         with zipfile.ZipFile(tests / (name + '.jar'), 'w', zipfile.ZIP_DEFLATED) as archive:
             for file in sorted(classes.rglob('*.class')):
                 archive.write(file, file.relative_to(classes).as_posix())
             archive.writestr('x1/encoded.png', bytes(value ^ 0x5a for value in density_fixture()))
+            if name.startswith('memory'):
+                for index in range(24):archive.writestr('bulk/asset%d.bin'%index,bytes([index])*(1024*1024))
             archive.writestr('META-INF/MANIFEST.MF', 'Manifest-Version: 1.0\r\nMIDlet-Name: Android test\r\nMIDlet-Vendor: GaEmulator\r\nMIDlet-1: Test,,' + entry + '\r\nTest-Port: 41041\r\nTest-Mode: ' + mode + '\r\n\r\n')
     print('Prepared Android runtime and instrumentation fixtures:', assets)
 

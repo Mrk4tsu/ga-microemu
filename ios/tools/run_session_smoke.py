@@ -10,7 +10,7 @@ import time
 import zipfile
 
 IOS = Path(__file__).resolve().parents[1]
-CASES = ("reflection", "constructor", "clinit", "start", "destroy", "cpu", "wait", "thread", "flood", "queue", "nested", "nested-route", "exit", "failure", "resources")
+CASES = ("reflection", "constructor", "clinit", "start", "destroy", "cpu", "wait", "thread", "flood", "queue", "nested", "nested-route", "exit", "failure", "resources", "paint-stop")
 
 
 def main(executable, javac, selected=None):
@@ -44,7 +44,7 @@ def main(executable, javac, selected=None):
             if mode == "flood": env["MICROEMU_LONG_INPUT"] = "1"
             if mode == "queue": env["MICROEMU_QUEUE_FLOOD"] = "1"
             if mode == "nested-route": env["MICROEMU_NESTED_ROUTING"] = "1"
-            repeats = 30 if mode == "resources" else 1
+            repeats = 30 if mode in ("resources","paint-stop") else 1
             if repeats > 1: env["MICROEMU_SESSION_REPEATS"] = str(repeats)
             started = time.monotonic()
             try:
@@ -73,7 +73,9 @@ def main(executable, javac, selected=None):
                       "wait": "SESSION_BLOCK wait",
                       "nested-route": "SESSION_NESTED_ROUTING_PASS",
                       "cpu": "SESSION_BLOCK cpu", "destroy": "SESSION_BLOCK destroy",
-                      "thread": "SESSION_BLOCK child-thread", "flood": "SESSION_TEXT_STARTED"}[mode]
+                      "thread": "SESSION_BLOCK child-thread", "flood": "SESSION_TEXT_STARTED", "paint-stop":"SESSION_PAINT_STOP_READY"}[mode]
+            if mode=="paint-stop" and output.count("[SESSION] first-frame")!=repeats:
+                print(output);raise SystemExit("Rendering did not start for every Stop stress session")
             if (result.returncode or output.count(marker) != repeats or
                 output.count("[TAB_FINISHED tab=1 result=0]") != repeats or
                 (repeats == 1 and (elapsed > 6 or (mode != "exit" and "[STOP_REQUEST" not in output))) or

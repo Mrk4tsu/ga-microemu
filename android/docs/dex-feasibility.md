@@ -20,8 +20,8 @@ Chuyển đổi vẫn cần bytecode đọc được. Làm rối tên class khô
 
 Importer Android (`GameStore.importJar`) đã sao chép theo khối 64 KiB và tính SHA-256 trong cùng lượt; giới hạn JAR hiện là 256 MiB. Không nạp toàn bộ JAR vào một `byte[]` ở bước sao chép.
 
-Ở runtime, `IOSClassLoader` nạp từng class khi cần, nhưng có bản sao bytecode qua `ByteArrayOutputStream`/`toByteArray`. Analyzer cũng đọc trọn mỗi class để phân tích header. miniJVM pin hiện tại có `ZipEntry.contents` giữ nội dung đã giải nén; loader giữ các entry trong bảng tra cứu. Đây là những chỗ nên đo lượng byte giữ lại và đỉnh bộ nhớ trước khi quyết định đổi engine. Chưa có phép đo khẳng định chúng gây lỗi với JAR lớn cụ thể của người dùng.
+Trước tối ưu, `IOSClassLoader` giữ entry cùng nội dung giải nén và sao chép bytecode qua `ByteArrayOutputStream`/`toByteArray`; analyzer đọc trọn mỗi class để lấy header. Các đường đọc này nay dùng `ArchiveIO`: ZIP theo luồng, chỉ mục tên, đọc riêng header và buffer bytecode thuộc riêng loader. Số đo đối chứng và giới hạn tại [archive-memory.md](../../ios/docs/archive-memory.md). Thay đổi đi qua adapter chung, không cần đổi miniJVM sang DEX.
 
-Ưu tiên hiện tại: đo và log riêng nhập file → kiểm tra ZIP → phân tích class → nạp class → giải mã tài nguyên; sau đó giảm sao chép/giữ dữ liệu và nghiên cứu đọc ZIP theo luồng. Cache phân tích đã có trong runtime. Chỉ thay đổi khi có JAR đối chứng và kiểm thử mức sử dụng bộ nhớ.
+Với các JAR còn lỗi, tiếp tục phân biệt nhập file → kiểm tra ZIP → phân tích class → nạp class → giải mã tài nguyên; không suy ra nguyên nhân từ kích thước JAR. Phép thử tổng hợp chứng minh mức giảm buffer, chưa chứng minh mọi game sẽ giảm RAM cùng tỷ lệ hoặc giải quyết mọi dạng mã hóa.
 
 Nếu bổ sung DEX/ART, cần adapter Java ME, loader, quản lý phiên/tài nguyên và cơ chế Stop phù hợp riêng. Supervisor miniJVM hiện tại chỉ quản lý thread của miniJVM, không tự hủy được thread game trên ART. Nên đánh giá backend này độc lập qua cùng giao diện frontend; không ghép các runtime trong một phiên.

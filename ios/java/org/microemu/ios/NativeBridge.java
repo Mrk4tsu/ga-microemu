@@ -3,6 +3,12 @@ package org.microemu.ios;
 /** Native functions registered explicitly with the embedded interpreter. */
 public final class NativeBridge {
     private NativeBridge() { }
+    public static native long archiveOpen(String path,String entry);
+    public static native int archiveRead(long handle,byte[] data,int offset,int length);
+    public static native long archiveRemaining(long handle);
+    public static native boolean archiveRewind(long handle);
+    public static native void archiveClose(long handle);
+    public static native int archiveCount();
     public static native boolean validViewport(int width, int height);
     public static native boolean userViewportTab(int tabId);
     public static native boolean fullScreenTab(int tabId);

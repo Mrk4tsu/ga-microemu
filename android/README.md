@@ -6,6 +6,8 @@ Tác giả ứng dụng: **MrK4tsu**, lưu trong metadata manifest (`com.gamod.g
 
 Đánh giá tùy chọn chia class khi chuyển DEX và hướng xử lý JAR lớn: [dex-feasibility.md](docs/dex-feasibility.md).
 
+Đã triển khai tối ưu miniJVM: ZIP resource theo luồng, phân tích riêng header class, nạp bytecode vào một buffer và thu hồi reader theo phiên. Số đo host và giới hạn: [archive-memory.md](../ios/docs/archive-memory.md).
+
 ## Cài bản APK
 
 Trong GitHub Actions, chạy workflow **Build Android APK**, rồi tải artifact **GaEmulator-Android-APK**. Cài tệp **GaEmulator-debug.apk** trên điện thoại Android 8.0 trở lên. APK chung hỗ trợ **arm64-v8a, armeabi-v7a và x86_64**.

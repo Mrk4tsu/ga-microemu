@@ -209,7 +209,8 @@ public final class IOSRuntime implements MicroEmulator, TabRunner {
         MIDletAccess access = midletAccess;
         if (access != null) {
             if (!destroyed) access.destroyApp(true);
-            if (access.getDisplayAccess() != null) access.getDisplayAccess().clean();
+            DisplayAccess display=access.getDisplayAccess();
+            if (display != null) display.clean();
         }
     }
 

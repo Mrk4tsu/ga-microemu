@@ -37,19 +37,7 @@ public final class IOSHost {
             for (int i = 0; i < archives.length; i++) {
                 JarEntry entry = archives[i].getJarEntry(path);
                 if (entry == null) continue;
-                InputStream in = archives[i].getInputStream(entry);
-                if (in == null) continue;
-                try {
-                    ByteArrayOutputStream out = new ByteArrayOutputStream();
-                    byte[] buffer = new byte[4096];
-                    int count;
-                    while ((count = in.read(buffer)) != -1) {
-                        if (count > 0) out.write(buffer, 0, count);
-                    }
-                    return out.toByteArray();
-                } finally {
-                    in.close();
-                }
+                return ArchiveIO.read(archives[i],entry);
             }
             return null;
         }
@@ -78,8 +66,11 @@ public final class IOSHost {
 
         public InputStream getResourceAsStream(String name) {
             try {
-                byte[] bytes = readEntry(name);
-                if (bytes != null) return new ByteArrayInputStream(bytes);
+                while(name.startsWith("/"))name=name.substring(1);
+                for(int i=0;i<archives.length;i++) {
+                    JarEntry entry=archives[i].getJarEntry(name);
+                    if(entry!=null)return ArchiveIO.open(archives[i],entry);
+                }
             } catch (IOException ignored) {
             }
             return super.getResourceAsStream(name);

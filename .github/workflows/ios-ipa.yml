@@ -50,6 +50,7 @@ jobs:
           python3 ios/tools/run_lifecycle_smoke.py --executable ios/build/host/microemu-headless
           python3 ios/tools/run_session_smoke.py --executable ios/build/host/microemu-headless
           python3 ios/tools/run_compatibility_smoke.py --executable ios/build/host/microemu-headless
+          python3 ios/tools/run_memory_smoke.py --executable ios/build/host/microemu-headless --report ios/build/memory-check.json
           python3 ios/tools/run_ui_smoke.py --executable ios/build/host/microemu-headless
       - name: Generate Xcode project
         run: python3 ios/tools/generate_project.py
@@ -79,4 +80,6 @@ jobs:
           path: |
             ios/build/xcodebuild.log
             ios/build/host/Testing/Temporary/LastTest.log
+            ios/build/memory-check.json
+            ios/build/memory-check.log
           if-no-files-found: ignore

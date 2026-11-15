@@ -1,6 +1,6 @@
 # Triển khai roadmap tương thích iOS
 
-Ngày: 2026-11-14. Giữ miniJVM pin `76f904ea4008a8058db5155bf5ee2cfe94d19e60`. Android ở nhánh riêng. Hai tài liệu đánh giá ban đầu không bị sửa.
+Ngày: 2026-11-14; cập nhật ZIP I/O ngày 2026-11-15. Giữ miniJVM pin `76f904ea4008a8058db5155bf5ee2cfe94d19e60`. Android có adapter riêng trong `android/` và dùng chung core. Hai tài liệu đánh giá ban đầu không bị sửa.
 
 ## Phần đã đưa vào runtime
 
@@ -13,6 +13,8 @@ Ngày: 2026-11-14. Giữ miniJVM pin `76f904ea4008a8058db5155bf5ee2cfe94d19e60`.
 7. **LCDUI adapters:** dùng model/layout/traversal của MicroEmulator cho Form/List/TextField/StringItem/ImageItem/ChoiceGroup/Gauge/DateField/CustomItem. TextField đang focus trong Form mở editor native bằng phím Fire; commit quay về dispatcher của Display. Sửa khôi phục focus của Form và select command khi chạm List. Không thêm runtime của emulator khác.
 
 ## Cấu hình từng game
+
+Tối ưu đọc ZIP/bytecode, registry reader theo phiên và số đo bộ nhớ được ghi tại [archive-memory.md](archive-memory.md).
 
 UIKit hỏi kích thước ở lần đầu mở mỗi JAR, gồm preset/custom/Full screen, rồi dùng lựa chọn đã lưu cho các lần mở sau. Nút ⓘ trong danh sách JAR mở trình sửa, áp dụng từ lần mở tiếp theo. Lựa chọn này ưu tiên hơn profile file cũ. Full screen thử lại một lần ở vùng vẽ nhỏ hơn nếu lỗi ảnh trước khung hình đầu tiên; xem [screen-size-selection.md](screen-size-selection.md).
 

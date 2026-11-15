@@ -21,14 +21,14 @@ final class IOSClassLoader extends ClassLoader {
                 while (en.hasMoreElements()) {
                     JarEntry entry = (JarEntry) en.nextElement();
                     String raw = entry.getName();
-                    exactEntries.put(raw, entry);
+                    exactEntries.put(raw, raw);
                     String norm = normalize(raw);
                     if (!exactEntries.containsKey(norm)) {
-                        exactEntries.put(norm, entry);
+                        exactEntries.put(norm, raw);
                     }
                     String lower = norm.toLowerCase();
                     if (!lowerEntries.containsKey(lower)) {
-                        lowerEntries.put(lower, entry);
+                        lowerEntries.put(lower, raw);
                     }
                 }
             }
@@ -45,12 +45,12 @@ final class IOSClassLoader extends ClassLoader {
     JarEntry findEntry(String name) {
         if (name == null) return null;
         String norm = normalize(name);
-        JarEntry entry = (JarEntry) exactEntries.get(norm);
-        if (entry != null) return entry;
-        entry = (JarEntry) exactEntries.get(name);
-        if (entry != null) return entry;
-        entry = (JarEntry) lowerEntries.get(norm.toLowerCase());
-        if (entry != null) return entry;
+        String entry = (String) exactEntries.get(norm);
+        if (entry != null) return new JarEntry(entry);
+        entry = (String) exactEntries.get(name);
+        if (entry != null) return new JarEntry(entry);
+        entry = (String) lowerEntries.get(norm.toLowerCase());
+        if (entry != null) return new JarEntry(entry);
         try {
             return archive.getJarEntry(norm);
         } catch (Throwable ignored) {
@@ -61,19 +61,9 @@ final class IOSClassLoader extends ClassLoader {
     protected Class findClass(String name) throws ClassNotFoundException {
         String path = name.replace('.', '/') + ".class";
         try {
-            InputStream in = ownResource(path);
-            if (in == null) throw new ClassNotFoundException(name);
-            ByteArrayOutputStream out = new ByteArrayOutputStream();
-            try {
-                byte[] buffer = new byte[4096];
-                int count;
-                while ((count = in.read(buffer)) != -1) {
-                    if (count > 0) out.write(buffer, 0, count);
-                }
-            } finally {
-                in.close();
-            }
-            byte[] bytes = LegacyBytecode.adapt(out.toByteArray());
+            JarEntry entry=findEntry(path);
+            if(entry==null)throw new ClassNotFoundException(name);
+            byte[] bytes = LegacyBytecode.adapt(ArchiveIO.read(archive,entry));
             return defineClass(name, bytes, 0, bytes.length);
         } catch (IOException error) {
             throw new ClassNotFoundException(name + ": " + error);
@@ -85,13 +75,13 @@ final class IOSClassLoader extends ClassLoader {
         try {
             JarEntry entry = findEntry(name);
             if (entry != null) {
-                InputStream in = archive.getInputStream(entry);
+                InputStream in = ArchiveIO.open(archive,entry);
                 if (in != null) return in;
             }
             String norm = normalize(name);
             JarEntry direct = archive.getJarEntry(norm);
             if (direct != null) {
-                return archive.getInputStream(direct);
+                return ArchiveIO.open(archive,direct);
             }
         } catch (Throwable ignored) { }
         return null;

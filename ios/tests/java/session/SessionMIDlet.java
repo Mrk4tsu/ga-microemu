@@ -69,7 +69,7 @@ public final class SessionMIDlet extends MIDlet {
                 notifyDestroyed();
             }}).start();
         }
-        Display.getDisplay(this).setCurrent(new Canvas() {
+        final Canvas canvas=new Canvas() {
             private boolean typed;
             private boolean held;
             protected void keyPressed(int key) {
@@ -86,7 +86,17 @@ public final class SessionMIDlet extends MIDlet {
             protected void paint(Graphics g) {
                 g.setColor(0x224466); g.fillRect(0, 0, getWidth(), getHeight());
             }
-        });
+        };
+        Display.getDisplay(this).setCurrent(canvas);
+        if("paint-stop".equals(mode())) {
+            new Thread(new Runnable() { public void run() {
+                for(;;) {
+                    canvas.repaint();canvas.serviceRepaints();
+                    try { Thread.sleep(1); } catch(InterruptedException ignored) { }
+                }
+            }}).start();
+            System.out.println("SESSION_PAINT_STOP_READY");
+        }
         System.out.println("SESSION_READY");
         if (!"flood".equals(mode()) && !"queue".equals(mode()) && !"resources".equals(mode())) NativeBridge.status("SESSION_ARM");
     }

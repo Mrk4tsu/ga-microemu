@@ -121,10 +121,11 @@ final class IOSDevice implements Device, DeviceDisplay, FontManager, PaintFailur
         // MIDlet paint may acquire game locks or load resources. Never call it
         // while holding an emulator monitor shared with image/input operations.
         MIDletAccess access = MIDletBridge.getMIDletAccess();
-        if (access != null && access.getDisplayAccess() != null) {
+        org.microemu.DisplayAccess display=access==null?null:access.getDisplayAccess();
+        if (display != null) {
             failedPaint.set(Boolean.FALSE);
             try {
-                access.getDisplayAccess().paint(new IOSGraphics(screen));
+                display.paint(new IOSGraphics(screen));
                 if (!runtime.hasGameFailure() && !Boolean.TRUE.equals(failedPaint.get()))
                     NativeBridge.presentTab(runtime.tabId, screen.surface);
             } finally { failedPaint.remove(); }
