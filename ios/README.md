@@ -1,5 +1,7 @@
 # MicroEmu cho iPhone
 
+GaEmulator — tác giả ứng dụng: **MrK4tsu**. Bản Android và hướng dẫn build APK nằm tại [android/README.md](../android/README.md).
+
 Bản port iOS mới sử dụng API MIDP/CLDC của MicroEmulator, JVM thông dịch miniJVM và bộ vẽ C. App nhập JAR từ Files, chạy game trong máy, có cảm ứng, phím ảo, hộp nhập văn bản và RMS lưu riêng cho từng game. Không cần JIT hoặc jailbreak theo thiết kế này.
 
 Đây là bản triển khai đầu tiên. **Chưa có kết quả build Xcode hoặc kiểm thử trên iPhone thật.** Bộ thông dịch, lớp Java ME và bộ vẽ đã được build/chạy thử trên Windows. GitHub Actions sẽ kiểm tra phần dùng chung trước khi build iOS.

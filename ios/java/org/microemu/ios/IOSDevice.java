@@ -81,7 +81,7 @@ final class IOSDevice implements Device, DeviceDisplay, FontManager, PaintFailur
         this.runtime = runtime;
         this.width = width; this.height = height;
         screen = new IOSImage(NativeBridge.create(width, height, 0xff000000), true);
-        properties.put("microedition.platform", "MicroEmu-iOS");
+        properties.put("microedition.platform", System.getProperty("microemu.platform", "MicroEmu-iOS"));
     }
     public void init() { }
     public void destroy() { input.dispose(); }

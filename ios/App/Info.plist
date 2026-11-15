@@ -7,6 +7,8 @@
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
   <key>CFBundleName</key><string>GaEmulator</string>
   <key>CFBundleDisplayName</key><string>GaEmulator</string>
+  <key>GaEmulatorAuthor</key><string>MrK4tsu</string>
+  <key>NSHumanReadableCopyright</key><string>GaEmulator © 2026 MrK4tsu. Third-party components retain their original notices.</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>0.1.0</string>
   <key>CFBundleVersion</key><string>1</string>

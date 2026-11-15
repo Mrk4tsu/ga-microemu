@@ -185,7 +185,7 @@ public final class IOSRuntime implements MicroEmulator, TabRunner {
         stores = new IOSRecordStores(new File(rmsPath, suiteKey())); stores.init(this);
         File temporary = new File(rmsPath, "tmp"); temporary.mkdirs();
         if (System.getProperty("java.io.tmpdir") == null) System.setProperty("java.io.tmpdir", temporary.getAbsolutePath());
-        System.setProperty("microedition.platform", "MicroEmu-iOS");
+        System.setProperty("microedition.platform", System.getProperty("microemu.platform", "MicroEmu-iOS"));
         System.setProperty("microedition.configuration", "CLDC-1.1");
         System.setProperty("microedition.profiles", "MIDP-2.0");
         System.setProperty("microedition.locale", "vi-VN");

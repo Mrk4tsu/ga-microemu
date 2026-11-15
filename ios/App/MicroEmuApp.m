@@ -1203,7 +1203,8 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
 }
 - (NSString*)tableView:(UITableView*)tableView titleForFooterInSection:(NSInteger)section {
     if(self.onPickJar)return self.games.count?@"Tap a game to open it in a new tab. Tap ⓘ to change its screen size for the next launch.":@"No JAR files yet. Tap Import JAR to add one.";
-    return self.games.count?@"Tap a game to run it. Set up its screen size once; tap ⓘ to change it later. Swipe left or tap Edit to remove a JAR.":@"Import a MIDP JAR from Files to get started. Games run locally on your iPhone.";
+    NSString *help=self.games.count?@"Tap a game to run it. Set up its screen size once; tap ⓘ to change it later. Swipe left or tap Edit to remove a JAR.":@"Import a MIDP JAR from Files to get started. Games run locally on your iPhone.";
+    return [help stringByAppendingString:@"\nGaEmulator · MrK4tsu"];
 }
 - (void)tableView:(UITableView*)tableView didSelectRowAtIndexPath:(NSIndexPath*)index {
     if(self.onPickJar){

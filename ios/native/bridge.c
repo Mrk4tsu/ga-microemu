@@ -718,6 +718,9 @@ static int run_jvm_entry(const char *boot, const char *classpath, const char *en
     configure_jvm_memory(jvm);
     jvm->jdwp_enable = 0;
     if (jvm_init(jvm, (char *)boot, (char *)classpath)) { em_platform_status(0, "Cannot initialize Java runtime"); return -1; }
+#if defined(__ANDROID__)
+    sys_properties_set_c(jvm, "microemu.platform", "MicroEmu-Android");
+#endif
     native_reg_lib(jvm, methods, sizeof(methods) / sizeof(methods[0]));
     int result = call_main(jvm, (char *)entry, args);
     if (result == RUNTIME_STATUS_ERROR && jvm->collector->exit_flag) result = jvm->collector->exit_code;
