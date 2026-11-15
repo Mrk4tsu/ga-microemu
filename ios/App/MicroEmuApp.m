@@ -4,6 +4,8 @@
 #import <mach/mach.h>
 #import "AppPlatform.h"
 #import "ScreenSizePicker.h"
+#import "EmControls.h"
+#import "TabOverviewController.h"
 #include "emulator.h"
 #include <math.h>
 #include <stdio.h>
@@ -340,6 +342,7 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
 @property(nonatomic) BOOL started;
 @property(nonatomic) BOOL finished;
 @property(nonatomic) BOOL stopping;
+@property(nonatomic) BOOL closeWhenFinished;
 @property(nonatomic) BOOL sleeping;
 @property(nonatomic) BOOL fullScreen;
 @property(nonatomic,strong) NSDictionary *modalInfo;
@@ -385,7 +388,11 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
 @property(nonatomic,strong) NSMutableArray<NSURL*> *pendingLaunches;
 @property(nonatomic,strong) UIBarButtonItem *stopItem;
 @property(nonatomic,strong) UIBarButtonItem *addTabItem;
+@property(nonatomic,strong) UIBarButtonItem *logItem;
+@property(nonatomic,strong) UIBarButtonItem *keyboardItem;
+@property(nonatomic,strong) UIBarButtonItem *returnToGameItem;
 @property(nonatomic,strong) UIButton *tabSelector;
+@property(nonatomic,strong) TabOverviewController *tabOverview;
 @property(nonatomic,strong) NSLayoutConstraint *inputBarBottomConstraint;
 @property(nonatomic,strong) UILabel *metricsLabel;
 @property(nonatomic,strong) NSTimer *metricsTimer;
@@ -399,21 +406,24 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
     self.navigationItem.largeTitleDisplayMode=UINavigationItemLargeTitleDisplayModeNever;
     self.navigationItem.hidesBackButton=YES;
     self.pendingLaunches=[NSMutableArray new];self.tabs=[NSMutableArray new];self.padButtons=[NSMutableArray new];self.lastSentText=@"";
-    self.stopItem=[[UIBarButtonItem alloc] initWithTitle:@"Stop" style:UIBarButtonItemStylePlain target:self action:@selector(stop)];
-    self.addTabItem=[[UIBarButtonItem alloc] initWithTitle:@"New tab" style:UIBarButtonItemStylePlain target:self action:@selector(newTab)];
-    self.navigationItem.leftBarButtonItems=@[self.stopItem,self.addTabItem];
+    self.stopItem=EmIconItem(EmControlStop,@"Stop game",self,@selector(stop));
+    self.stopItem.tintColor=[UIColor colorWithRed:1 green:0.3 blue:0.3 alpha:1];
+    self.stopItem.accessibilityIdentifier=@"stop-game";
+    self.addTabItem=EmIconItem(EmControlAdd,@"New tab",self,@selector(newTab));
+    self.addTabItem.accessibilityIdentifier=@"new-tab";
+    self.logItem=EmIconItem(EmControlLog,@"Share log",self,@selector(shareLog));
+    self.keyboardItem=EmIconItem(EmControlKeyboard,@"Keyboard",self,@selector(keyboard));
+    self.returnToGameItem=EmIconItem(EmControlExpand,@"Return to game",self,@selector(toggleTabOverview));
     self.tabSelector=[UIButton buttonWithType:UIButtonTypeSystem];
-    if(@available(iOS 14.0,*))self.tabSelector.showsMenuAsPrimaryAction=YES;
-    else [self.tabSelector addTarget:self action:@selector(showTabSheet) forControlEvents:UIControlEventTouchUpInside];
+    [self.tabSelector addTarget:self action:@selector(toggleTabOverview) forControlEvents:UIControlEventTouchUpInside];
     self.tabSelector.tintColor=UIColor.whiteColor;
     self.tabSelector.titleLabel.font=[UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
-    self.tabSelector.titleLabel.lineBreakMode=NSLineBreakByTruncatingMiddle;
-    [self.tabSelector setTitle:[self.jar.lastPathComponent stringByAppendingString:@" ▾"] forState:UIControlStateNormal];
-    [self.tabSelector sizeToFit];
+    self.tabSelector.accessibilityIdentifier=@"show-tabs";
+    self.tabSelector.frame=CGRectMake(0,0,76,44);
+    self.tabSelector.contentEdgeInsets=UIEdgeInsetsMake(10,12,10,12);
+    self.tabSelector.imageEdgeInsets=UIEdgeInsetsMake(0,-6,0,6);
     self.navigationItem.titleView=self.tabSelector;
-    self.navigationItem.rightBarButtonItems=@[
-        [[UIBarButtonItem alloc] initWithTitle:@"Log" style:UIBarButtonItemStylePlain target:self action:@selector(shareLog)],
-        [[UIBarButtonItem alloc] initWithTitle:@"Keyboard" style:UIBarButtonItemStylePlain target:self action:@selector(keyboard)]];
+    [self updateTabSelector];
     self.screen=[GameScreen new];self.screen.virtualWidth=240;self.screen.virtualHeight=320;
     self.screen.contentMode=UIViewContentModeScaleAspectFit;self.screen.userInteractionEnabled=YES;self.screen.multipleTouchEnabled=YES;self.screen.layer.magnificationFilter=kCAFilterNearest;
     self.statusRow=[UIView new];
@@ -428,8 +438,8 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
     self.metricsLabel.minimumScaleFactor=0.8;
     self.metricsLabel.numberOfLines=1;
     [self.metricsLabel setContentCompressionResistancePriority:UILayoutPriorityDefaultHigh forAxis:UILayoutConstraintAxisHorizontal];
-    self.padToggle=[UIButton buttonWithType:UIButtonTypeSystem];[self.padToggle setTitle:@"Hide Pad" forState:UIControlStateNormal];
-    self.padToggle.titleLabel.font=[UIFont systemFontOfSize:12 weight:UIFontWeightMedium];[self.padToggle addTarget:self action:@selector(togglePad) forControlEvents:UIControlEventTouchUpInside];
+    self.padToggle=[UIButton buttonWithType:UIButtonTypeSystem];EmSetButtonIcon(self.padToggle,EmControlPadHidden,@"Hide gamepad");
+    [self.padToggle addTarget:self action:@selector(togglePad) forControlEvents:UIControlEventTouchUpInside];
     [self.padToggle setContentCompressionResistancePriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
     for(UIView*v in @[self.status,self.metricsLabel,self.padToggle]){v.translatesAutoresizingMaskIntoConstraints=NO;[self.statusRow addSubview:v];}
     NSLayoutConstraint *metricsCenterX=[self.metricsLabel.centerXAnchor constraintEqualToAnchor:self.statusRow.centerXAnchor];
@@ -444,8 +454,10 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
         [self.metricsLabel.trailingAnchor constraintLessThanOrEqualToAnchor:self.padToggle.leadingAnchor constant:-6],
         [self.padToggle.trailingAnchor constraintEqualToAnchor:self.statusRow.trailingAnchor constant:-12],
         [self.padToggle.centerYAnchor constraintEqualToAnchor:self.statusRow.centerYAnchor],
+        [self.padToggle.widthAnchor constraintEqualToConstant:44],
+        [self.padToggle.heightAnchor constraintEqualToConstant:44],
         [self.padToggle.leadingAnchor constraintGreaterThanOrEqualToAnchor:self.metricsLabel.trailingAnchor constant:6],
-        [self.statusRow.heightAnchor constraintEqualToConstant:26]]];
+        [self.statusRow.heightAnchor constraintEqualToConstant:44]]];
     self.numpadGrid=[self gridWithRows:@[
         @[[self key:@"1" codes:@[@('1')] accent:NO],[self key:@"2" codes:@[@('2')] accent:NO],[self key:@"3" codes:@[@('3')] accent:NO]],
         @[[self key:@"4" codes:@[@('4')] accent:NO],[self key:@"5" codes:@[@('5')] accent:NO],[self key:@"6" codes:@[@('6')] accent:NO]],
@@ -577,46 +589,64 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
 }
 - (void)updateTabSelector {
     GameTab *active=[self activeTab];
-    NSString *title=active?[NSString stringWithFormat:@"%d · %@ ▾",active.tabId,active.jar.lastPathComponent]:[self.jar.lastPathComponent stringByAppendingString:@" ▾"];
-    [self.tabSelector setTitle:title forState:UIControlStateNormal];
-    [self.tabSelector sizeToFit];
-    if(@available(iOS 14.0,*)){
-        NSMutableArray<UIAction*> *actions=[NSMutableArray new];
-        __weak GameController *weakSelf=self;
-        for(GameTab *tab in self.tabs){
-            NSString *suffix=tab.finished?@" · Stopped":@"";
-            NSString *label=[NSString stringWithFormat:@"Tab %d · %@%@",tab.tabId,tab.jar.lastPathComponent,suffix];
-            int targetId=tab.tabId;
-            UIAction *action=[UIAction actionWithTitle:label image:nil identifier:nil handler:^(UIAction*a){
-                [weakSelf switchToTab:targetId];
-            }];
-            action.state=tab.tabId==self.activeTabId?UIMenuElementStateOn:UIMenuElementStateOff;
-            [actions addObject:action];
-        }
-        if(@available(iOS 15.0,*)){
-            self.tabSelector.menu=[UIMenu menuWithTitle:@"" image:nil identifier:nil options:UIMenuOptionsSingleSelection children:actions];
-        }else{
-            self.tabSelector.menu=[UIMenu menuWithTitle:@"" children:actions];
-        }
-    }
+    EmSetButtonIcon(self.tabSelector,EmControlTabs,self.tabOverview?@"Return to game":@"Show tabs");
+    [self.tabSelector setTitle:[NSString stringWithFormat:@"%lu",(unsigned long)self.tabs.count] forState:UIControlStateNormal];
+    self.tabSelector.accessibilityValue=[NSString stringWithFormat:@"%lu tabs. %@",(unsigned long)self.tabs.count,active.jar.lastPathComponent?:@""];
+    self.tabSelector.enabled=self.tabs.count>0 && !self.closingHost;
+    self.stopItem.image=EmControlImage(active.finished?EmControlClose:EmControlStop);
+    self.stopItem.accessibilityLabel=active.finished?@"Close tab":@"Stop game";
+    self.stopItem.enabled=active!=nil && !active.stopping && !self.closingHost;
+    self.addTabItem.enabled=!self.closingHost && !self.hostFinished;
+    self.keyboardItem.enabled=active!=nil && !active.finished && !active.stopping && !self.closingHost;
+    self.returnToGameItem.enabled=self.tabs.count>0 && !self.closingHost;
+    self.logItem.enabled=!self.closingHost;
+    self.navigationItem.leftBarButtonItems=self.tabOverview?@[self.addTabItem]:@[self.stopItem,self.addTabItem];
+    self.navigationItem.rightBarButtonItems=self.tabOverview?@[self.logItem,self.returnToGameItem]:@[self.logItem,self.keyboardItem];
+    [self refreshTabOverview];
 }
-- (void)showTabSheet {
-    if(self.closingHost || self.presentedViewController || !self.tabs.count)return;
-    UIAlertController *sheet=[UIAlertController alertControllerWithTitle:nil message:nil preferredStyle:UIAlertControllerStyleActionSheet];
-    __weak GameController *weakSelf=self;
+- (void)refreshTabOverview {
+    if(!self.tabOverview)return;
+    NSMutableArray<EmTabPreview *> *previews=[NSMutableArray new];
     for(GameTab *tab in self.tabs){
-        NSString *prefix=tab.tabId==self.activeTabId?@"✓ ":@"";
-        NSString *suffix=tab.finished?@" · Stopped":@"";
-        NSString *label=[NSString stringWithFormat:@"%@Tab %d · %@%@",prefix,tab.tabId,tab.jar.lastPathComponent,suffix];
-        int targetId=tab.tabId;
-        [sheet addAction:[UIAlertAction actionWithTitle:label style:UIAlertActionStyleDefault handler:^(UIAlertAction*a){
-            [weakSelf switchToTab:targetId];
-        }]];
+        EmTabPreview *preview=[EmTabPreview new];preview.tabId=tab.tabId;
+        preview.title=tab.jar.lastPathComponent.stringByDeletingPathExtension;
+        preview.image=tab.lastImage;preview.status=tab.statusText;preview.active=tab.tabId==self.activeTabId;
+        preview.finished=tab.finished;preview.stopping=tab.stopping;preview.sleeping=tab.sleeping;
+        [previews addObject:preview];
     }
-    [sheet addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
-    sheet.popoverPresentationController.sourceView=self.tabSelector;
-    sheet.popoverPresentationController.sourceRect=self.tabSelector.bounds;
-    [self presentViewController:sheet animated:YES completion:nil];
+    [self.tabOverview displayTabs:previews];
+}
+- (void)hideTabOverview {
+    TabOverviewController *overview=self.tabOverview;
+    if(!overview)return;
+    [overview willMoveToParentViewController:nil];[overview.view removeFromSuperview];[overview removeFromParentViewController];
+    self.tabOverview=nil;[self updateTabSelector];
+    UIAccessibilityPostNotification(UIAccessibilityScreenChangedNotification,self.tabSelector);
+}
+- (void)toggleTabOverview {
+    if(self.tabOverview){[self hideTabOverview];[self restoreActiveModal];return;}
+    if(self.closingHost || self.choosingResolution || !self.tabs.count)return;
+    if(self.presentedViewController && self.presentedViewController!=self.textModal)return;
+    [self cancelActiveInputs];
+    TabOverviewController *overview=[TabOverviewController new];self.tabOverview=overview;
+    __weak GameController *weakSelf=self;
+    overview.onSelectTab=^(int tabId){
+        GameController *owner=weakSelf;if(!owner || ![owner tabWithId:tabId])return;
+        [owner hideTabOverview];
+        if(owner.activeTabId==tabId)[owner restoreActiveModal];else [owner switchToTab:tabId];
+    };
+    overview.onStopTab=^(int tabId){[weakSelf stopTab:tabId close:NO];};
+    overview.onCloseTab=^(int tabId){[weakSelf stopTab:tabId close:YES];};
+    [self addChildViewController:overview];
+    overview.view.translatesAutoresizingMaskIntoConstraints=NO;[self.view addSubview:overview.view];
+    UILayoutGuide *safe=self.view.safeAreaLayoutGuide;
+    [NSLayoutConstraint activateConstraints:@[
+        [overview.view.topAnchor constraintEqualToAnchor:safe.topAnchor],
+        [overview.view.bottomAnchor constraintEqualToAnchor:safe.bottomAnchor],
+        [overview.view.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor],
+        [overview.view.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor]]];
+    [overview didMoveToParentViewController:self];[self updateTabSelector];
+    UIAccessibilityPostNotification(UIAccessibilityScreenChangedNotification,overview.collectionView);
 }
 - (void)startRuntimeIfReady {
     if(self.hostStarted || self.closingHost || !self.view.window)return;
@@ -644,13 +674,12 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
                 [UIApplication sharedApplication].idleTimerDisabled=NO;
                 if(owner.closingHost){[owner close];return;}
                 for(GameTab *tab in owner.tabs){
-                    tab.finished=YES;
+                    tab.finished=YES;tab.stopping=NO;
                     tab.statusText=result==0?@"Game stopped":[NSString stringWithFormat:@"Failed at %d × %d — see Log; try a smaller screen",tab.virtualWidth,tab.virtualHeight];
                 }
                 GameTab *active=[owner activeTab];
                 if(active){
                     owner.status.text=active.statusText;
-                    owner.stopItem.title=owner.tabs.count>1?@"Close":@"Back";
                 }
                 [owner updateTabSelector];
             });
@@ -678,7 +707,9 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
     [self cancelActiveInputs];
     for(GameTab *tab in self.tabs){
         if(!tab.finished && !tab.stopping && [tab.jar.URLByStandardizingPath isEqual:jarURL.URLByStandardizingPath]){
-            [self switchToTab:tab.tabId];return YES;
+            [self hideTabOverview];
+            if(tab.tabId==self.activeTabId)[self restoreActiveModal];else [self switchToTab:tab.tabId];
+            return YES;
         }
     }
     [self openNewTabWithJar:jarURL];return YES;
@@ -690,6 +721,7 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
     [self processLaunchQueue];
 }
 - (void)restoreActiveModal {
+    if(self.tabOverview)return;
     GameTab *tab=[self activeTab];
     if(tab.modalInfo && !tab.finished && !tab.stopping)
         [self modalChanged:[NSNotification notificationWithName:EmModalNotification object:tab.modalInfo]];
@@ -742,6 +774,7 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
 }
 - (void)launchNewTabWithJar:(NSURL*)jarURL width:(int)width height:(int)height fullScreen:(BOOL)fullScreen {
     if(!jarURL || self.closingHost || self.hostFinished || !em_viewport_valid(width,height))return;
+    [self hideTabOverview];
     [self cancelActiveInputs];
     GameTab *previous=[self activeTab];
     if(previous){
@@ -768,7 +801,6 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
     self.screen.contentMode=fullScreen?UIViewContentModeScaleToFill:UIViewContentModeScaleAspectFit;
     self.screen.image=nil;
     self.status.text=tab.statusText;
-    self.stopItem.title=@"Stop";
     EmClearFrame(tab.tabId);
     NSString *rms=rmsPathForSlot(tab.rmsSlot);
     if(fullScreen)em_host_open_tab_fullscreen(tab.tabId,jarURL.path.fileSystemRepresentation,rms.fileSystemRepresentation,width,height);
@@ -794,7 +826,6 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
     self.screen.contentMode=next.fullScreen?UIViewContentModeScaleToFill:UIViewContentModeScaleAspectFit;
     self.screen.image=next.lastImage;
     self.status.text=next.statusText?:@"";
-    self.stopItem.title=next.finished?(self.tabs.count>1?@"Close":@"Back"):@"Stop";
     next.sleeping=NO;
     if(!next.finished)em_host_sleep_tab(next.tabId,0);
     [self updateTabSelector];
@@ -813,6 +844,7 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
 }
 - (void)newTab {
     if(self.closingHost || self.hostFinished || self.presentedViewController)return;
+    [self cancelActiveInputs];
     NSURL *currentJar=[self activeTab].jar?:self.jar;
     UIAlertController *sheet=[UIAlertController alertControllerWithTitle:@"New tab" message:@"Choose a game to open in a new tab" preferredStyle:UIAlertControllerStyleActionSheet];
     __weak GameController *weakSelf=self;
@@ -840,7 +872,7 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
 }
 - (void)togglePad {
     self.padHidden=!self.padHidden;
-    [self.padToggle setTitle:self.padHidden?@"Show Pad":@"Hide Pad" forState:UIControlStateNormal];
+    EmSetButtonIcon(self.padToggle,self.padHidden?EmControlPad:EmControlPadHidden,self.padHidden?@"Show gamepad":@"Hide gamepad");
     [self updatePadLayout];
 }
 - (UIStackView*)gridWithRows:(NSArray<NSArray<UIView*>*>*)rows {
@@ -909,7 +941,7 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
     UIButton *send=[UIButton buttonWithType:UIButtonTypeSystem];[send setTitle:@"↵" forState:UIControlStateNormal];
     send.titleLabel.font=[UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];send.backgroundColor=UIColor.systemBlueColor;send.tintColor=UIColor.whiteColor;send.layer.cornerRadius=8;
     [send addTarget:self action:@selector(keyboardSendReturn) forControlEvents:UIControlEventTouchUpInside];
-    UIButton *done=[UIButton buttonWithType:UIButtonTypeSystem];[done setTitle:@"Done" forState:UIControlStateNormal];
+    UIButton *done=[UIButton buttonWithType:UIButtonTypeSystem];EmSetButtonIcon(done,EmControlCollapse,@"Hide keyboard");
     done.titleLabel.font=[UIFont systemFontOfSize:14 weight:UIFontWeightSemibold];done.backgroundColor=[UIColor colorWithWhite:0.24 alpha:1];done.tintColor=UIColor.whiteColor;done.layer.cornerRadius=8;
     [done addTarget:self action:@selector(hideKeyboard) forControlEvents:UIControlEventTouchUpInside];
     [self.inputBar addSubview:line];
@@ -972,19 +1004,25 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
     if(@available(iOS 15.0,*)){}else{self.inputBarBottomConstraint.constant=0;[self.view layoutIfNeeded];}
 }
 - (void)frame {
-    if(!self.activeTabId)return;
-    int width,height;NSData *data=EmConsumeFrame(self.activeTabId,&width,&height);if(!data)return;
+    if(self.tabOverview){
+        for(GameTab *tab in self.tabs)[self consumeFrameForTab:tab];
+    }else [self consumeFrameForTab:[self activeTab]];
+}
+- (void)consumeFrameForTab:(GameTab *)tab {
+    if(!tab)return;
+    int width,height;NSData *data=EmConsumeFrame(tab.tabId,&width,&height);if(!data)return;
     // The runtime may fit legacy asset packs to a smaller logical framebuffer.
-    self.screen.virtualWidth=width;self.screen.virtualHeight=height;
-    GameTab *sizedTab=[self activeTab];
-    if(sizedTab){sizedTab.virtualWidth=width;sizedTab.virtualHeight=height;}
+    tab.virtualWidth=width;tab.virtualHeight=height;
     CGColorSpaceRef color=CGColorSpaceCreateDeviceRGB();CGDataProviderRef provider=CGDataProviderCreateWithCFData((__bridge CFDataRef)data);
     CGImageRef image=CGImageCreate(width,height,8,32,width*4,color,kCGBitmapByteOrder32Little|kCGImageAlphaFirst,provider,NULL,NO,kCGRenderingIntentDefault);
     if(image){
         UIImage *uiImage=[UIImage imageWithCGImage:image];
-        self.screen.image=uiImage;
-        GameTab *active=[self activeTab];
-        if(active)active.lastImage=uiImage;
+        tab.lastImage=uiImage;
+        if(tab.tabId==self.activeTabId){
+            self.screen.virtualWidth=width;self.screen.virtualHeight=height;
+            self.screen.image=uiImage;
+        }
+        [self.tabOverview updateImage:uiImage forTab:tab.tabId];
         CGImageRelease(image);
     }
     CGDataProviderRelease(provider);CGColorSpaceRelease(color);
@@ -996,13 +1034,14 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
     GameTab *tab=[self tabWithId:tabId];
     if(tab)tab.statusText=text;
     if(tabId==self.activeTabId)self.status.text=text;
+    [self refreshTabOverview];
 }
 - (void)modalChanged:(NSNotification*)notification {
     NSDictionary *info=notification.object;
     int tabId=[info[@"tabId"] intValue];
     GameTab *tab=[self tabWithId:tabId];
     if(tab)tab.modalInfo=info[@"title"]==NSNull.null?nil:info;
-    if(tabId!=self.activeTabId || self.choosingResolution)return;
+    if(tabId!=self.activeTabId || self.choosingResolution || self.tabOverview)return;
     if(info[@"title"]==NSNull.null){[self.textModal dismissViewControllerAnimated:NO completion:nil];self.textModal=nil;return;}
     if(!tab || tab.finished || tab.stopping)return;
     [self hideKeyboard];
@@ -1037,13 +1076,15 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
     int result=[info[@"result"] intValue];
     GameTab *tab=[self tabWithId:tabId];
     if(!tab)return;
-    tab.finished=YES;tab.modalInfo=nil;
+    // Take a pending final frame before the session's presentation queue is cleared.
+    [self consumeFrameForTab:tab];
+    tab.finished=YES;tab.stopping=NO;tab.modalInfo=nil;
     EmClearFrame(tabId);
-    if(tab.stopping){[self removeTab:tab];return;}
+    if(tab.closeWhenFinished){[self removeTab:tab];return;}
     tab.statusText=result==0?@"Game stopped":[NSString stringWithFormat:@"Failed at %d × %d — see Log; try a smaller screen",tab.virtualWidth,tab.virtualHeight];
     if(tabId==self.activeTabId){
         self.status.text=tab.statusText;
-        self.stopItem.title=self.tabs.count>1?@"Close":@"Back";
+        [self cancelActiveInputs];
     }
     [self updateTabSelector];
 }
@@ -1056,6 +1097,7 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
         if(!self.hostStarted || self.hostFinished){runtimeActive=NO;[self close];return;}
         self.closingHost=YES;
         self.activeTabId=0;self.screen.tabId=0;
+        [self updateTabSelector];
         em_host_shutdown();
         return;
     }
@@ -1077,7 +1119,8 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
 - (void)shareLog {
     NSURL *log=[[gamesDirectory() URLByDeletingLastPathComponent] URLByAppendingPathComponent:@"microemu.log"];
     if(![[NSFileManager defaultManager] fileExistsAtPath:log.path])return;
-    UIActivityViewController *share=[[UIActivityViewController alloc] initWithActivityItems:@[log] applicationActivities:nil];share.popoverPresentationController.barButtonItem=self.navigationItem.rightBarButtonItems.firstObject;[self presentViewController:share animated:YES completion:nil];
+    if(self.presentedViewController)return;
+    UIActivityViewController *share=[[UIActivityViewController alloc] initWithActivityItems:@[log] applicationActivities:nil];share.popoverPresentationController.barButtonItem=self.logItem;[self presentViewController:share animated:YES completion:nil];
 }
 - (void)keyboard {
     GameTab *tab=[self activeTab];
@@ -1100,13 +1143,23 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
         if(!self.hostStarted || self.hostFinished){runtimeActive=NO;[self close];}
         return;
     }
-    if(tab.finished || self.hostFinished){[self removeTab:tab];return;}
+    [self stopTab:tab.tabId close:NO];
+}
+- (void)stopTab:(int)tabId close:(BOOL)closeTab {
+    GameTab *tab=[self tabWithId:tabId];
+    if(!tab || self.closingHost)return;
+    if(tab.finished || self.hostFinished){if(closeTab || tabId==self.activeTabId)[self removeTab:tab];return;}
+    // X may follow Stop before the worker finishes: remember the request, but
+    // keep the tab/RMS slot until native session cleanup acknowledges it.
+    if(closeTab)tab.closeWhenFinished=YES;
     if(tab.stopping)return;
-    tab.stopping=YES;tab.statusText=@"Stopping game…";self.status.text=tab.statusText;
-    [self cancelActiveInputs];
+    tab.stopping=YES;tab.statusText=@"Stopping game…";
+    if(tabId==self.activeTabId){self.status.text=tab.statusText;[self cancelActiveInputs];}
     em_host_close_tab(tab.tabId);
+    [self updateTabSelector];
 }
 - (void)close {
+    [self hideTabOverview];
     [self.metricsTimer invalidate];self.metricsTimer=nil;
     [self.displayLink invalidate];self.displayLink=nil;
     [UIApplication sharedApplication].idleTimerDisabled=NO;
@@ -1132,7 +1185,7 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
     }else{
         self.navigationItem.leftBarButtonItem=self.editButtonItem;
     }
-    self.navigationItem.rightBarButtonItem=[[UIBarButtonItem alloc] initWithTitle:@"Import JAR" style:UIBarButtonItemStylePlain target:self action:@selector(importJar)];
+    self.navigationItem.rightBarButtonItem=EmIconItem(EmControlImport,@"Import JAR",self,@selector(importJar));
     self.tableView.backgroundColor=emGroupedBgColor();
     self.tableView.rowHeight=58;
     if(@available(iOS 13.0,*)){}else{self.tableView.separatorColor=[UIColor colorWithWhite:0.22 alpha:1];}
