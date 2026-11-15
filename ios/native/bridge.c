@@ -2,6 +2,7 @@
 #include "jvm.h"
 #include "jvm_util.h"
 #include "garbage.h"
+#include "immix.h"
 #include "jit.h"
 #include "miniz.h"
 #include "mbedtls/sha256.h"
@@ -20,7 +21,7 @@
 #endif
 
 static once_flag initialized = ONCE_FLAG_INIT;
-static mtx_t surface_lock, event_lock, archive_lock;
+static mtx_t surface_lock, event_lock, archive_lock, memory_lock;
 static int archive_count(uint64_t owner);
 static EmSurface *surfaces;
 static uint64_t next_surface = 1;
@@ -58,8 +59,10 @@ static void initialize(void) {
     mtx_init(&surface_lock, mtx_plain);
     mtx_init(&event_lock, mtx_plain);
     mtx_init(&archive_lock, mtx_plain);
+    mtx_init(&memory_lock, mtx_plain);
     jvm_init_mem_alloc();
 }
+#include "memory_control.inc"
 static char *copy_text(const char *text) {
     if (!text) return NULL;
     size_t length = strlen(text);
@@ -353,10 +356,12 @@ static int poll_for_tab(int tab_id, Instance *array) {
     return found;
 }
 static s32 poll_event(Runtime *r, JClass *c) {
+    memory_control_poll(r);
     push_int(r->stack, poll_for_tab(0, localvar_getRefer(r->localvar, 0)));
     return 0;
 }
 static s32 poll_tab(Runtime *r, JClass *c) {
+    if(localvar_getInt(r->localvar,0)==0)memory_control_poll(r);
     push_int(r->stack, poll_for_tab(localvar_getInt(r->localvar, 0), localvar_getRefer(r->localvar, 1)));
     return 0;
 }
@@ -731,9 +736,11 @@ static int run_jvm_entry(const char *boot, const char *classpath, const char *en
     sys_properties_set_c(jvm, "microemu.platform", "MicroEmu-Android");
 #endif
     native_reg_lib(jvm, methods, sizeof(methods) / sizeof(methods[0]));
+    memory_runtime_state(1);
     int result = call_main(jvm, (char *)entry, args);
     if (result == RUNTIME_STATUS_ERROR && jvm->collector->exit_flag) result = jvm->collector->exit_code;
     /* JVM shutdown has joined its Java threads before destroying their heap. */
+    memory_runtime_state(0);
     jvm_destroy(jvm);
     archive_release(0, 1);
     mtx_lock(&surface_lock);

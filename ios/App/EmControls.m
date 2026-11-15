@@ -6,7 +6,7 @@ UIImage *EmControlImage(EmControlIcon icon) {
     UIImage *image=images[@(icon)];
     if(image)return image;
     NSArray<NSString *> *names=@[@"plus",@"square.on.square",@"keyboard",@"doc.text",
-        @"xmark",@"arrow.up.left.and.arrow.down.right",@"gamecontroller",@"gamecontroller.fill",@"chevron.down",@"square.and.arrow.down"];
+        @"xmark",@"arrow.up.left.and.arrow.down.right",@"gamecontroller",@"gamecontroller.fill",@"chevron.down",@"square.and.arrow.down",@"line.3.horizontal"];
     if(@available(iOS 13.0,*))image=[UIImage systemImageNamed:names[icon]];
     if(!image){
         // Vector fallback also keeps the iOS 12 deployment target usable.
@@ -15,6 +15,8 @@ UIImage *EmControlImage(EmControlIcon icon) {
         UIBezierPath *path=[UIBezierPath bezierPath];path.lineWidth=1.8;
         path.lineCapStyle=kCGLineCapRound;path.lineJoinStyle=kCGLineJoinRound;
         switch(icon){
+            case EmControlMenu:
+                for(int y=6;y<=18;y+=6){[path moveToPoint:CGPointMake(4,y)];[path addLineToPoint:CGPointMake(20,y)];}break;
             case EmControlAdd:
                 [path moveToPoint:CGPointMake(12,4)];[path addLineToPoint:CGPointMake(12,20)];
                 [path moveToPoint:CGPointMake(4,12)];[path addLineToPoint:CGPointMake(20,12)];break;

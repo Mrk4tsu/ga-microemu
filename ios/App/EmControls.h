@@ -2,7 +2,7 @@
 
 typedef NS_ENUM(NSInteger, EmControlIcon) {
     EmControlAdd, EmControlTabs, EmControlKeyboard, EmControlLog,
-    EmControlClose, EmControlExpand, EmControlPad, EmControlPadHidden, EmControlCollapse, EmControlImport
+    EmControlClose, EmControlExpand, EmControlPad, EmControlPadHidden, EmControlCollapse, EmControlImport, EmControlMenu
 };
 
 UIImage *EmControlImage(EmControlIcon icon);

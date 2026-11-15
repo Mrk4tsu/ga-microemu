@@ -6,6 +6,8 @@
 #import "ScreenSizePicker.h"
 #import "EmControls.h"
 #import "TabOverviewController.h"
+#import "MemoryManager.h"
+#import "MemorySettingsController.h"
 #include "emulator.h"
 #include <math.h>
 #include <stdio.h>
@@ -73,17 +75,6 @@ static NSString *rmsPathForSlot(int slot) {
     NSURL *dir=slot<=1?[documents URLByAppendingPathComponent:@"RMS" isDirectory:YES]:[[documents URLByAppendingPathComponent:@"RMS-Tabs" isDirectory:YES] URLByAppendingPathComponent:[NSString stringWithFormat:@"tab-%d",slot] isDirectory:YES];
     [[NSFileManager defaultManager] createDirectoryAtURL:dir withIntermediateDirectories:YES attributes:nil error:nil];
     return dir.path;
-}
-static uint64_t emAppResidentMemory(void) {
-    task_vm_info_data_t vmInfo;
-    mach_msg_type_number_t count=TASK_VM_INFO_COUNT;
-    kern_return_t kr=task_info(mach_task_self(),TASK_VM_INFO,(task_info_t)&vmInfo,&count);
-    if(kr==KERN_SUCCESS && vmInfo.phys_footprint>0)return (uint64_t)vmInfo.phys_footprint;
-    struct task_basic_info basic;
-    count=TASK_BASIC_INFO_COUNT;
-    kr=task_info(mach_task_self(),TASK_BASIC_INFO,(task_info_t)&basic,&count);
-    if(kr==KERN_SUCCESS)return (uint64_t)basic.resident_size;
-    return 0;
 }
 static float emCurrentCpuUsage(void) {
     thread_array_t thread_list;
@@ -384,10 +375,11 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
 @property(nonatomic) BOOL hostFinished;
 @property(nonatomic) BOOL closingHost;
 @property(nonatomic) BOOL choosingResolution;
+@property(nonatomic) BOOL configuringMemory;
 @property(nonatomic,strong) NSMutableArray<NSURL*> *pendingLaunches;
 @property(nonatomic,strong) UIBarButtonItem *closeTabItem;
 @property(nonatomic,strong) UIBarButtonItem *addTabItem;
-@property(nonatomic,strong) UIBarButtonItem *logItem;
+@property(nonatomic,strong) UIBarButtonItem *menuItem;
 @property(nonatomic,strong) UIBarButtonItem *keyboardItem;
 @property(nonatomic,strong) UIBarButtonItem *returnToGameItem;
 @property(nonatomic,strong) UIButton *tabSelector;
@@ -410,7 +402,7 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
     self.closeTabItem.accessibilityIdentifier=@"close-tab";
     self.addTabItem=EmIconItem(EmControlAdd,@"New tab",self,@selector(newTab));
     self.addTabItem.accessibilityIdentifier=@"new-tab";
-    self.logItem=EmIconItem(EmControlLog,@"Share log",self,@selector(shareLog));
+    self.menuItem=EmIconItem(EmControlMenu,@"Settings and log",self,@selector(showGameMenu));
     self.keyboardItem=EmIconItem(EmControlKeyboard,@"Keyboard",self,@selector(keyboard));
     self.returnToGameItem=EmIconItem(EmControlExpand,@"Return to game",self,@selector(toggleTabOverview));
     self.tabSelector=[UIButton buttonWithType:UIButtonTypeSystem];
@@ -529,6 +521,7 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
     [nc addObserver:self selector:@selector(keyboardWillHide:) name:UIKeyboardWillHideNotification object:nil];
     [nc addObserver:self selector:@selector(appDidEnterBackground) name:UIApplicationDidEnterBackgroundNotification object:nil];
     [nc addObserver:self selector:@selector(appWillEnterForeground) name:UIApplicationWillEnterForegroundNotification object:nil];
+    [nc addObserver:self selector:@selector(compactBackgroundPreviews:) name:EmMemoryWillCleanNotification object:nil];
     self.displayLink=[CADisplayLink displayLinkWithTarget:self selector:@selector(frame)];self.displayLink.preferredFramesPerSecond=30;[self.displayLink addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
     self.navigationController.interactivePopGestureRecognizer.enabled=NO;[UIApplication sharedApplication].idleTimerDisabled=YES;
     __weak GameController *weakSelf=self;
@@ -562,7 +555,7 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
     }
 }
 - (void)updateMetrics {
-    uint64_t appMem=emAppResidentMemory();
+    uint64_t appMem=EmAppMemoryBytes();
     uint64_t totalMem=[NSProcessInfo processInfo].physicalMemory;
     float cpu=emCurrentCpuUsage();
     double appMB=(double)appMem/(1024.0*1024.0);
@@ -596,9 +589,9 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
     self.addTabItem.enabled=!self.closingHost && !self.hostFinished;
     self.keyboardItem.enabled=active!=nil && !active.finished && !active.stopping && !self.closingHost;
     self.returnToGameItem.enabled=self.tabs.count>0 && !self.closingHost;
-    self.logItem.enabled=!self.closingHost;
+    self.menuItem.enabled=!self.closingHost;
     self.navigationItem.leftBarButtonItems=self.tabOverview?@[self.addTabItem]:@[self.closeTabItem,self.addTabItem];
-    self.navigationItem.rightBarButtonItems=self.tabOverview?@[self.logItem,self.returnToGameItem]:@[self.logItem,self.keyboardItem];
+    self.navigationItem.rightBarButtonItems=self.tabOverview?@[self.menuItem,self.returnToGameItem]:@[self.menuItem,self.keyboardItem];
     [self refreshTabOverview];
 }
 - (void)refreshTabOverview {
@@ -622,7 +615,7 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
 }
 - (void)toggleTabOverview {
     if(self.tabOverview){[self hideTabOverview];[self restoreActiveModal];return;}
-    if(self.closingHost || self.choosingResolution || !self.tabs.count)return;
+    if(self.closingHost || self.choosingResolution || self.configuringMemory || !self.tabs.count)return;
     if(self.presentedViewController && self.presentedViewController!=self.textModal)return;
     [self cancelActiveInputs];
     TabOverviewController *overview=[TabOverviewController new];self.tabOverview=overview;
@@ -699,7 +692,7 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
 }
 
 - (BOOL)openExternalJar:(NSURL*)jarURL {
-    if(!jarURL || !self.hostStarted || self.closingHost || self.hostFinished || self.choosingResolution)return NO;
+    if(!jarURL || !self.hostStarted || self.closingHost || self.hostFinished || self.choosingResolution || self.configuringMemory)return NO;
     [self cancelActiveInputs];
     for(GameTab *tab in self.tabs){
         if(!tab.finished && !tab.stopping && [tab.jar.URLByStandardizingPath isEqual:jarURL.URLByStandardizingPath]){
@@ -723,7 +716,7 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
         [self modalChanged:[NSNotification notificationWithName:EmModalNotification object:tab.modalInfo]];
 }
 - (void)processLaunchQueue {
-    if(self.choosingResolution || self.closingHost || self.hostFinished || !self.pendingLaunches.count)return;
+    if(self.choosingResolution || self.configuringMemory || self.closingHost || self.hostFinished || !self.pendingLaunches.count)return;
     __weak GameController *weakSelf=self;
     if(self.presentedViewController){
         if(self.presentedViewController==self.textModal)self.textModal=nil;
@@ -1037,7 +1030,7 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
     int tabId=[info[@"tabId"] intValue];
     GameTab *tab=[self tabWithId:tabId];
     if(tab)tab.modalInfo=info[@"title"]==NSNull.null?nil:info;
-    if(tabId!=self.activeTabId || self.choosingResolution || self.tabOverview)return;
+    if(tabId!=self.activeTabId || self.choosingResolution || self.configuringMemory || self.tabOverview)return;
     if(info[@"title"]==NSNull.null){[self.textModal dismissViewControllerAnimated:NO completion:nil];self.textModal=nil;return;}
     if(!tab || tab.finished || tab.stopping)return;
     [self hideKeyboard];
@@ -1113,11 +1106,56 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
     if(field==self.keyboardField){[self keyboardSendReturn];return NO;}
     return YES;
 }
+- (void)compactBackgroundPreviews:(NSNotification *)notification {
+    for(GameTab *tab in self.tabs){
+        if(tab.tabId==self.activeTabId || !tab.sleeping || tab.finished || tab.stopping)continue;
+        UIImage *source=tab.lastImage;CGFloat longest=MAX(source.size.width,source.size.height);
+        if(longest>240){
+            CGSize size=CGSizeMake(MAX(1,round(source.size.width*240/longest)),MAX(1,round(source.size.height*240/longest)));
+            UIGraphicsBeginImageContextWithOptions(size,NO,1);
+            CGContextRef context=UIGraphicsGetCurrentContext();UIImage *preview=nil;
+            if(context){CGContextSetInterpolationQuality(context,kCGInterpolationNone);[source drawInRect:(CGRect){CGPointZero,size}];preview=UIGraphicsGetImageFromCurrentImageContext();}
+            UIGraphicsEndImageContext();
+            if(preview)tab.lastImage=preview;
+        }
+        // Sleeping tabs redraw when selected. Their queued full-size UIKit copy
+        // can be dropped; the live Java/native rendering surface is untouched.
+        EmClearFrame(tab.tabId);
+    }
+    [self refreshTabOverview];
+}
+- (void)showGameMenu {
+    if(self.presentedViewController || self.closingHost || self.choosingResolution || self.configuringMemory)return;
+    [self cancelActiveInputs];
+    UIAlertController *menu=[UIAlertController alertControllerWithTitle:@"GaEmulator" message:nil preferredStyle:UIAlertControllerStyleActionSheet];
+    __weak GameController *weakSelf=self;
+    [menu addAction:[UIAlertAction actionWithTitle:@"Quản lý bộ nhớ" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
+        [weakSelf dismissViewControllerAnimated:YES completion:^{[weakSelf showMemorySettings];}];
+    }]];
+    [menu addAction:[UIAlertAction actionWithTitle:@"Chia sẻ log" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
+        [weakSelf dismissViewControllerAnimated:YES completion:^{[weakSelf shareLog];}];
+    }]];
+    [menu addAction:[UIAlertAction actionWithTitle:@"Hủy" style:UIAlertActionStyleCancel handler:nil]];
+    menu.popoverPresentationController.barButtonItem=self.menuItem;[self presentViewController:menu animated:YES completion:nil];
+}
+- (void)showMemorySettings {
+    if(self.presentedViewController || self.choosingResolution || self.configuringMemory || self.closingHost)return;
+    [self cancelActiveInputs];self.configuringMemory=YES;
+    MemorySettingsController *settings=[MemorySettingsController new];__weak GameController *weakSelf=self;
+    settings.onClose=^{
+        weakSelf.configuringMemory=NO;[weakSelf restoreActiveModal];[weakSelf processLaunchQueue];
+        [[NSNotificationCenter defaultCenter] postNotificationName:EmJarHostReadyNotification object:weakSelf];
+    };
+    UINavigationController *navigation=[[UINavigationController alloc] initWithRootViewController:settings];
+    navigation.modalPresentationStyle=UIModalPresentationFullScreen;
+    if(@available(iOS 13.0,*)){}else navigation.navigationBar.barStyle=UIBarStyleBlack;
+    [self presentViewController:navigation animated:YES completion:nil];
+}
 - (void)shareLog {
     NSURL *log=[[gamesDirectory() URLByDeletingLastPathComponent] URLByAppendingPathComponent:@"microemu.log"];
     if(![[NSFileManager defaultManager] fileExistsAtPath:log.path])return;
     if(self.presentedViewController)return;
-    UIActivityViewController *share=[[UIActivityViewController alloc] initWithActivityItems:@[log] applicationActivities:nil];share.popoverPresentationController.barButtonItem=self.logItem;[self presentViewController:share animated:YES completion:nil];
+    UIActivityViewController *share=[[UIActivityViewController alloc] initWithActivityItems:@[log] applicationActivities:nil];share.popoverPresentationController.barButtonItem=self.menuItem;[self presentViewController:share animated:YES completion:nil];
 }
 - (void)keyboard {
     GameTab *tab=[self activeTab];
@@ -1181,12 +1219,27 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
     }else{
         self.navigationItem.leftBarButtonItem=self.editButtonItem;
     }
-    self.navigationItem.rightBarButtonItem=EmIconItem(EmControlImport,@"Import JAR",self,@selector(importJar));
+    self.navigationItem.rightBarButtonItems=@[EmIconItem(EmControlImport,@"Import JAR",self,@selector(importJar)),
+        EmIconItem(EmControlMenu,@"Quản lý bộ nhớ",self,@selector(showMemorySettings))];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(clearMetadataCaches:) name:EmMemoryWillCleanNotification object:nil];
     self.tableView.backgroundColor=emGroupedBgColor();
     self.tableView.rowHeight=58;
     if(@available(iOS 13.0,*)){}else{self.tableView.separatorColor=[UIColor colorWithWhite:0.22 alpha:1];}
 }
 - (void)cancelPicker {[self dismissViewControllerAnimated:YES completion:nil];}
+- (void)clearMetadataCaches:(NSNotification *)notification {
+    [self.icons removeAllObjects];[self.subtitles removeAllObjects];[self.authors removeAllObjects];
+}
+- (void)showMemorySettings {
+    if(self.presentedViewController)return;
+    MemorySettingsController *settings=[MemorySettingsController new];
+    settings.onClose=^{[[NSNotificationCenter defaultCenter] postNotificationName:EmJarHostReadyNotification object:nil];};
+    UINavigationController *navigation=[[UINavigationController alloc] initWithRootViewController:settings];
+    navigation.modalPresentationStyle=UIModalPresentationFullScreen;
+    if(@available(iOS 13.0,*)){}else navigation.navigationBar.barStyle=UIBarStyleBlack;
+    [self presentViewController:navigation animated:YES completion:nil];
+}
+- (void)dealloc {[[NSNotificationCenter defaultCenter] removeObserver:self];}
 - (void)reloadGames {self.games=listGameJars();[self.tableView reloadData];}
 - (void)viewWillAppear:(BOOL)animated {[super viewWillAppear:animated];[self reloadGames];}
 - (NSInteger)tableView:(UITableView*)tableView numberOfRowsInSection:(NSInteger)section {return self.games.count;}
@@ -1301,6 +1354,7 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
 @implementation AppDelegate
 - (BOOL)application:(UIApplication*)application didFinishLaunchingWithOptions:(NSDictionary*)options {
     em_configure_memory_bytes([NSProcessInfo processInfo].physicalMemory);
+    [MemoryManager shared];
     self.incomingJars=[NSMutableArray new];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(jarHostReady:) name:EmJarHostReadyNotification object:nil];
     self.window=[[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
@@ -1339,11 +1393,11 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
 }
 - (void)jarHostReady:(NSNotification*)notification {[self openPendingJars];}
 - (void)openPendingJars {
-    if(self.openingIncomingJar || !self.incomingJars.count)return;
+    if(self.openingIncomingJar || !self.incomingJars.count || MemorySettingsController.hasOpenSettings)return;
     UINavigationController *navigation=(UINavigationController*)self.window.rootViewController;
     UIViewController *top=navigation.topViewController;
-    // Keep an in-progress screen-size decision intact when another file arrives.
-    if([top isKindOfClass:GameController.class] && ((GameController*)top).choosingResolution)return;
+    // Keep an in-progress settings decision intact when another file arrives.
+    if([top isKindOfClass:GameController.class] && (((GameController*)top).choosingResolution || ((GameController*)top).configuringMemory))return;
     UIViewController *presenter=navigation.presentedViewController?navigation:top;
     if(presenter.presentedViewController){
         self.openingIncomingJar=YES;

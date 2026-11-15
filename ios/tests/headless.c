@@ -10,6 +10,9 @@
 #include "stb_truetype.h"
 
 static const char *frame_path;
+static thrd_t cleanup_test_thread;
+static int cleanup_test_started;
+static int cleanup_test_run(void *unused);
 static double started, stop_after = 20, last_frame, multi_sleep_at;
 static int frames, stopped;
 static int multi_tab, multi_stage, tab_frames[8], tab_finished[8];
@@ -101,10 +104,31 @@ void em_platform_status(int tab_id, const char *s) {
     if (getenv("MICROEMU_STOP_ON_RETRY") && !strncmp(s, "Full screen:", 12)) em_host_close_tab(tab_id);
     if (getenv("MICROEMU_SCHEDULE_ON_STATUS") && !strcmp(s, "UI_ARM_SCHEDULE")) schedule_origin = seconds();
     mtx_unlock(&host_lock);
+    if(getenv("MICROEMU_CLEANUP_TEST") && !strcmp(s,"CLEANUP_READY") && !cleanup_test_started){
+        cleanup_test_started=thrd_create(&cleanup_test_thread,cleanup_test_run,NULL)==thrd_success;
+        if(!cleanup_test_started){puts("CLEANUP_TEST_FAIL thread");em_host_close_tab(1);}
+    }
     if (getenv("MICROEMU_NESTED_ROUTING")) {
         if (!strcmp(s, "ROUTE_A_READY")) em_tab_event(1, 13, 'a', 0, 0, NULL);
         if (!strcmp(s, "ROUTE_B_READY")) em_tab_event(1, 13, 'b', 0, 0, NULL);
     }
+}
+static int cleanup_test_run(void *unused) {
+    uint64_t token=em_memory_cleanup_request(),again=em_memory_cleanup_request();
+    if(!token || again!=token){puts("CLEANUP_TEST_FAIL coalescing");em_host_close_tab(1);return 1;}
+    double deadline=seconds()+6;EmMemoryCleanup status={0};
+    struct timespec delay={0,10000000};
+    do {em_memory_cleanup_status(&status);if(status.state>=EM_CLEANUP_DONE)break;thrd_sleep(&delay,NULL);}while(seconds()<deadline);
+    printf("[CLEANUP_RESULT] state=%d heap_before=%llu heap_after=%llu elapsed_ms=%llu\n",status.state,
+        (unsigned long long)status.heap_before,(unsigned long long)status.heap_after,(unsigned long long)status.elapsed_ms);
+    if(status.state!=EM_CLEANUP_DONE || status.heap_after>status.heap_before || status.heap_before-status.heap_after<20ULL*1024*1024){
+        puts("CLEANUP_TEST_FAIL reclamation");em_host_close_tab(1);return 1;
+    }
+    em_tab_event(1,13,'v',0,0,NULL);
+    // A foreign UI-like thread continues issuing requests while Stop tears down
+    // the VM. The public API must turn unavailable without touching freed data.
+    for(int i=0;i<100;i++){if(!em_memory_cleanup_request())break;thrd_sleep(&delay,NULL);}
+    puts("CLEANUP_THREAD_PASS");return 0;
 }
 void em_platform_modal(int tab_id, const char *t, const char *v, int max, int constraints, const char **labels, int count) {
     if (!t) return;
@@ -264,6 +288,11 @@ int main(int argc, char **argv) {
         else if (getenv("MICROEMU_USER_VIEWPORT")) em_host_open_tab_with_viewport(1, argv[3], argv[4], host_width, host_height);
         else em_host_open_tab(1, argv[3], argv[4], host_width, host_height);
         int result = em_host_run(argv[1], argv[2]);
+        if(getenv("MICROEMU_CLEANUP_TEST")){
+            int thread_result=1;
+            if(cleanup_test_started)thrd_join(cleanup_test_thread,&thread_result);
+            if(thread_result || em_memory_cleanup_request()!=0)result=5;
+        }
         printf("[HOST] result=%d frames=%d finished=%d\n", result, frames, tab_finished[1]);
         free(font_data);
         return result ? result : (!resource_failure && session_completed == session_repeats && tab_finished[1] == 1 && (frames > 0 || getenv("MICROEMU_ALLOW_NO_FRAME")) ? 0 : 3);

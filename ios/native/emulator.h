@@ -34,6 +34,14 @@ void em_host_sleep_tab(int tab_id, int sleeping);
 void em_host_close_tab(int tab_id);
 void em_host_shutdown(void);
 void em_configure_memory_bytes(uint64_t physical_bytes);
+enum { EM_CLEANUP_IDLE, EM_CLEANUP_QUEUED, EM_CLEANUP_RUNNING, EM_CLEANUP_DONE, EM_CLEANUP_UNAVAILABLE, EM_CLEANUP_TIMEOUT };
+typedef struct EmMemoryCleanup {
+    uint64_t token, heap_before, heap_after, elapsed_ms;
+    int state;
+} EmMemoryCleanup;
+/* Nonblocking, coalesced request. No VM pointer crosses into the frontend. */
+uint64_t em_memory_cleanup_request(void);
+void em_memory_cleanup_status(EmMemoryCleanup *status);
 void em_event(int type, int a, int b, int c, const char *text);
 void em_tab_event(int tab_id, int type, int a, int b, int c, const char *text);
 void em_reset_events(void);
