@@ -14,6 +14,7 @@ static thrd_t cleanup_test_thread;
 static int cleanup_test_started;
 static int cleanup_test_run(void *unused);
 static double started, stop_after = 20, last_frame, multi_sleep_at;
+static double queue_probe_at;
 static int frames, stopped;
 static int multi_tab, multi_stage, tab_frames[8], tab_finished[8];
 static int host_mode, stress_sent;
@@ -83,8 +84,10 @@ void em_platform_present(int tab_id, const EmSurface *s) {
             em_tab_event(tab_id, 1, 'z', 0, 0, NULL);
             em_tab_event(tab_id, 2, 'z', 0, 0, NULL);
         }
-        em_tab_event(tab_id, 1, 'q', 0, 0, NULL);
-        em_tab_event(tab_id, 2, 'q', 0, 0, NULL);
+        // A probe pushed into a saturated FIFO may legitimately be discarded.
+        // Deliver it after the producer finished, allowing a slow consumer to
+        // drain, and retry until the MIDlet acknowledges its held-key check.
+        mtx_lock(&host_lock);queue_probe_at=seconds()+0.35;mtx_unlock(&host_lock);
     }
     if (!write_frame) return;
     unsigned char *rgba = malloc((size_t)s->width * s->height * 4);
@@ -182,12 +185,15 @@ void em_platform_tick(void) {
     mtx_lock(&host_lock);
     int request_stop = stop_armed_at && seconds() - stop_armed_at >= 0.2;
     if (request_stop) stop_armed_at = 0;
+    int queue_probe = !request_stop && !stop_armed_at && !tab_finished[1] && queue_probe_at && seconds()>=queue_probe_at;
+    if(queue_probe)queue_probe_at=seconds()+0.05;
     double origin = schedule_origin;
     mtx_unlock(&host_lock);
     if (request_stop) {
         printf("[STOP_REQUEST elapsed=%.3f]\n", elapsed / 1000);
         em_host_close_tab(1);
     }
+    if(queue_probe){em_tab_event(1,1,'q',0,0,NULL);em_tab_event(1,2,'q',0,0,NULL);}
     const char *control = getenv("MICROEMU_CONTROL_FILE");
     if (control && elapsed - control_scanned >= 100) {
         control_scanned = elapsed; FILE *file = fopen(control, "r");

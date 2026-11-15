@@ -76,6 +76,11 @@ def main(executable, javac, selected=None):
                       "thread": "SESSION_BLOCK child-thread", "flood": "SESSION_TEXT_STARTED", "paint-stop":"SESSION_PAINT_STOP_READY"}[mode]
             if mode=="paint-stop" and output.count("[SESSION] first-frame")!=repeats:
                 print(output);raise SystemExit("Rendering did not start for every Stop stress session")
+            if mode=="queue":
+                if "SESSION_TEXT_STARTED" in output:
+                    print(output);raise SystemExit("queue: text-flood fixture armed Stop before the queue probe")
+                if "[STOP_REQUEST" in output and (marker not in output or output.index("[STOP_REQUEST")<output.index(marker)):
+                    print(output);raise SystemExit("queue: Stop was requested without a completed held-key probe")
             if (result.returncode or output.count(marker) != repeats or
                 output.count("[TAB_FINISHED tab=1 result=0]") != repeats or
                 (repeats == 1 and (elapsed > 6 or (mode != "exit" and "[STOP_REQUEST" not in output))) or

@@ -72,13 +72,17 @@ public final class SessionMIDlet extends MIDlet {
         final Canvas canvas=new Canvas() {
             private boolean typed;
             private boolean held;
+            private boolean queuePassed;
             protected void keyPressed(int key) {
                 if (key == 'z') held = true;
-                if (key == 'q') {
+                if (key == 'q' && "queue".equals(mode()) && !queuePassed) {
                     if (held) throw new Error("Queue overflow left key held");
+                    queuePassed = true;
                     System.out.println("SESSION_QUEUE_PASS"); NativeBridge.status("SESSION_ARM");
                 }
-                if (key == 'z' && !typed) {
+                // The flood test stops as soon as text delivery begins. The
+                // queue test must stay alive until the final held-key probe.
+                if (key == 'z' && "flood".equals(mode()) && !typed) {
                     typed = true; System.out.println("SESSION_TEXT_STARTED"); NativeBridge.status("SESSION_ARM");
                 }
             }
