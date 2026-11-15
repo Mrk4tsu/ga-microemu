@@ -1,8 +1,10 @@
 # GaEmulator cho Android
 
-Tác giả ứng dụng: **MrK4tsu**. Dòng tác giả hiển thị trong ứng dụng, thông tin About, metadata APK và notice đi kèm. Tác giả của từng JAR vẫn lấy từ metadata của game.
+Tác giả ứng dụng: **MrK4tsu**, lưu trong metadata manifest (`com.gamod.gaemulator.AUTHOR`), mô tả ứng dụng (`android:description`) và notice đi kèm. Không thêm dòng tác giả trên vùng chơi hoặc thư viện. Metadata tùy chỉnh không tự tạo mục tác giả trong màn hình Thông tin ứng dụng của Android; việc hiển thị phụ thuộc hệ thống hoặc công cụ đọc thông tin APK. Tác giả của từng JAR vẫn lấy từ metadata của game.
 
 Ứng dụng Android dùng chung miniJVM, MIDP/CLDC, bộ vẽ raster, RMS và TCP/HTTP với bản iOS. JAR được chạy trực tiếp trong interpreter; không chuyển từng game thành DEX hoặc APK. Module Android Ant cũ vẫn được giữ nguyên.
+
+Đánh giá tùy chọn chia class khi chuyển DEX và hướng xử lý JAR lớn: [dex-feasibility.md](docs/dex-feasibility.md).
 
 ## Cài bản APK
 

@@ -66,8 +66,6 @@ public final class MainActivity extends Activity implements NativeEngine.Listene
         addButton(toolbar,button("Mở JAR",this::pickJar));
         tabsButton=button("Tab",this::chooseTab); addButton(toolbar,tabsButton);
         addButton(toolbar,button("Bàn phím",this::showKeyboard)); addButton(toolbar,button("Log",this::showLog)); root.addView(toolbar);
-        TextView credit=new TextView(this);credit.setText(R.string.app_credit);credit.setTextColor(Color.LTGRAY);credit.setPadding(dp(10),dp(5),dp(10),dp(5));
-        credit.setOnClickListener(view->message("GaEmulator",getString(R.string.app_credit)+"\nTrình chạy game Java ME\nSử dụng MicroEmulator và miniJVM."));root.addView(credit);
         status=new TextView(this); status.setTextColor(Color.LTGRAY); status.setPadding(dp(10),dp(3),dp(10),dp(3)); status.setText(R.string.preparing); root.addView(status);
         FrameLayout content=new FrameLayout(this); root.addView(content,new LinearLayout.LayoutParams(-1,0,1));
         library=new ListView(this); content.addView(library,new FrameLayout.LayoutParams(-1,-1));

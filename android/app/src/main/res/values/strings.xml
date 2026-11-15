@@ -1,7 +1,7 @@
 <resources>
     <string name="app_name">GaEmulator</string>
     <string name="app_author">MrK4tsu</string>
-    <string name="app_credit">GaEmulator · Tác giả: MrK4tsu</string>
+    <string name="app_description">GaEmulator — Trình chạy game Java ME. Tác giả: MrK4tsu.</string>
     <string name="preparing">Đang chuẩn bị…</string>
     <string name="importing">Đang nhập JAR…</string>
     <string name="stopping">Đang dừng…</string>
