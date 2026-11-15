@@ -20,10 +20,10 @@ static __weak MemorySettingsController *openSettings;
     self.navigationItem.leftBarButtonItem=[[UIBarButtonItem alloc] initWithTitle:@"Hủy" style:UIBarButtonItemStylePlain target:self action:@selector(close)];
     self.navigationItem.rightBarButtonItem=[[UIBarButtonItem alloc] initWithTitle:@"Lưu" style:UIBarButtonItemStyleDone target:self action:@selector(save)];
     self.automatic=[UISwitch new];self.automatic.on=MemoryManager.shared.enabled;
-    self.automatic.accessibilityLabel=@"Tự động dọn bổ sung";
+    self.automatic.accessibilityLabel=@"Tự động dọn";
     [self.automatic addTarget:self action:@selector(updateFields) forControlEvents:UIControlEventValueChanged];
-    self.threshold=[self numberField:@"Ngưỡng RAM app (MB)" value:MemoryManager.shared.thresholdMB];
-    self.interval=[self numberField:@"Chu kỳ (giây)" value:MemoryManager.shared.intervalSeconds];
+    self.threshold=[self numberField:@"Ngưỡng RAM (MB)" value:MemoryManager.shared.thresholdMB];
+    self.interval=[self numberField:@"Dọn mỗi (giây)" value:MemoryManager.shared.intervalSeconds];
     self.tableView.keyboardDismissMode=UIScrollViewKeyboardDismissModeOnDrag;
     self.tableView.rowHeight=UITableViewAutomaticDimension;self.tableView.estimatedRowHeight=56;
     [self updateFields];
@@ -42,21 +42,21 @@ static __weak MemorySettingsController *openSettings;
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)view {return 3;}
 - (NSInteger)tableView:(UITableView *)view numberOfRowsInSection:(NSInteger)section {return section==0?2:section==1?3:1;}
 - (NSString *)tableView:(UITableView *)view titleForHeaderInSection:(NSInteger)section {
-    return section==0?@"Mức sử dụng hiện tại":section==1?@"Dọn bổ sung":nil;
+    return section==0?@"Bộ nhớ đang dùng":section==1?@"Cài đặt":nil;
 }
 - (NSString *)tableView:(UITableView *)view titleForFooterInSection:(NSInteger)section {
-    if(section==0)return @"Đây là RAM của GaEmulator, không phải RAM toàn hệ thống hay chỉ Java heap.";
-    if(section==1)return @"Tự động phản ứng khi iOS báo thiếu bộ nhớ. Ngưỡng RAM: 0 để tắt, hoặc 64–32768 MB; đây là ngưỡng yêu cầu dọn, không phải giới hạn RAM. Chu kỳ: 0 để tắt, hoặc 30–86400 giây. Mỗi lần dọn tự động cách nhau ít nhất 30 giây. Mặc định cả ngưỡng và chu kỳ đều tắt.";
-    return @"miniJVM vẫn tự thu gom rác dù tắt tùy chọn này. Dọn bổ sung thu nhỏ ảnh xem trước tab nền và yêu cầu GC; không đóng game hay xóa dữ liệu. Tài nguyên game đang dùng vẫn chiếm RAM. Dọn quá thường xuyên có thể gây khựng hình.";
+    if(section==0)return nil;
+    if(section==1)return @"Tự dọn khi thiếu bộ nhớ, RAM vượt ngưỡng hoặc đến lịch. Nhập 0 để tắt ngưỡng hoặc lịch dọn.";
+    return @"Chỉ dọn bộ nhớ không còn dùng. Game và dữ liệu được giữ nguyên.";
 }
 - (UITableViewCell *)tableView:(UITableView *)view cellForRowAtIndexPath:(NSIndexPath *)index {
     UITableViewCell *cell=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:nil];
     cell.selectionStyle=UITableViewCellSelectionStyleNone;
     if(index.section==0){
-        if(index.row==0){cell.textLabel.text=@"RAM app";self.footprint=cell.detailTextLabel;}
+        if(index.row==0){cell.textLabel.text=@"RAM của ứng dụng";self.footprint=cell.detailTextLabel;}
         else {cell.textLabel.numberOfLines=0;self.result=cell.textLabel;}
     }else if(index.section==1){
-        cell.textLabel.text=index.row==0?@"Tự động dọn bổ sung":index.row==1?@"Ngưỡng RAM (MB)":@"Chu kỳ (giây)";
+        cell.textLabel.text=index.row==0?@"Tự động dọn":index.row==1?@"Ngưỡng RAM (MB)":@"Dọn mỗi (giây)";
         cell.accessoryView=index.row==0?self.automatic:index.row==1?self.threshold:self.interval;
     }else {
         cell.textLabel.text=@"Dọn ngay";cell.textLabel.textAlignment=NSTextAlignmentCenter;
@@ -88,7 +88,7 @@ static __weak MemorySettingsController *openSettings;
 - (void)save {
     uint32_t mb,seconds;
     if(![self readNumber:self.threshold value:&mb] || ![self readNumber:self.interval value:&seconds] || !em_memory_settings_valid(mb,seconds)){
-        UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"Giá trị chưa hợp lệ" message:@"RAM: 0 hoặc 64–32768 MB. Chu kỳ: 0 hoặc 30–86400 giây." preferredStyle:UIAlertControllerStyleAlert];
+        UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"Kiểm tra lại số đã nhập" message:@"RAM: 64–32768 MB. Thời gian: 30–86400 giây. Nhập 0 để tắt." preferredStyle:UIAlertControllerStyleAlert];
         [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
         [self presentViewController:alert animated:YES completion:nil];return;
     }

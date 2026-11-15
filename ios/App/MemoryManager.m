@@ -40,7 +40,7 @@ uint64_t EmAppMemoryBytes(void) {
         if(mb>=0 && mb<=32768 && seconds>=0 && seconds<=86400 && em_memory_settings_valid((uint32_t)mb,(uint32_t)seconds)){
             _policy.threshold_mb=(uint32_t)mb;_policy.interval_seconds=(uint32_t)seconds;
         }
-        _policy.started_ms=uptimeMS();self.resultText=@"Chưa yêu cầu dọn bổ sung.";
+        _policy.started_ms=uptimeMS();self.resultText=@"Chưa dọn lần nào.";
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(memoryWarning:) name:UIApplicationDidReceiveMemoryWarningNotification object:nil];
         __weak MemoryManager *weakSelf=self;
         self.timer=[NSTimer scheduledTimerWithTimeInterval:1 repeats:YES block:^(NSTimer *timer){[weakSelf tick];}];
@@ -79,7 +79,7 @@ uint64_t EmAppMemoryBytes(void) {
     if(self.cleaning)return;
     self.cleaning=YES;self.beforeBytes=EmAppMemoryBytes();self.requestedAt=uptimeMS();
     _policy.has_attempt=1;_policy.last_attempt_ms=self.requestedAt;
-    self.resultText=@"Đang yêu cầu thu gom bộ nhớ không còn dùng…";
+    self.resultText=@"Đang dọn bộ nhớ…";
     [[NSNotificationCenter defaultCenter] postNotificationName:EmMemoryWillCleanNotification object:self];
     self.token=em_memory_cleanup_request();
     fprintf(stdout,"[MEMORY] request reason=%s token=%llu app_before=%llu\n",reason.UTF8String,(unsigned long long)self.token,(unsigned long long)self.beforeBytes);fflush(stdout);
@@ -91,10 +91,10 @@ uint64_t EmAppMemoryBytes(void) {
 }
 - (void)finishCleanup:(EmMemoryCleanup)state {
     uint64_t after=EmAppMemoryBytes();
-    NSString *result=state.state==EM_CLEANUP_DONE?@"Đã hoàn tất một lượt GC.":
-        state.state==EM_CLEANUP_UNAVAILABLE?@"Đã dọn cache giao diện; không có phiên Java đang chạy.":@"Chưa nhận xác nhận GC; không ép đóng game.";
-    NSString *measurement=self.beforeBytes && after?[NSString stringWithFormat:@"RAM app: %.1f → %.1f MB.",self.beforeBytes/1048576.0,after/1048576.0]:@"Không đọc được số đo RAM app.";
-    self.resultText=[NSString stringWithFormat:@"%@\n%@ RAM có thể không giảm nếu dữ liệu còn được dùng.",result,measurement];
+    NSString *result=state.state==EM_CLEANUP_DONE?@"Đã dọn xong.":
+        state.state==EM_CLEANUP_UNAVAILABLE?@"Đã dọn bộ nhớ tạm.":@"Chưa nhận được kết quả. Hãy thử lại sau.";
+    NSString *measurement=self.beforeBytes && after?[NSString stringWithFormat:@"RAM: %.1f → %.1f MB",self.beforeBytes/1048576.0,after/1048576.0]:@"Chưa đo được RAM.";
+    self.resultText=[NSString stringWithFormat:@"%@\n%@",result,measurement];
     self.cleaning=NO;self.token=0;
     fprintf(stdout,"[MEMORY] result state=%d app_before=%llu app_after=%llu heap_before=%llu heap_after=%llu elapsed_ms=%llu\n",state.state,
         (unsigned long long)self.beforeBytes,(unsigned long long)after,(unsigned long long)state.heap_before,(unsigned long long)state.heap_after,(unsigned long long)state.elapsed_ms);fflush(stdout);
