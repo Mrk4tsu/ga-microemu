@@ -14,10 +14,8 @@
 @property(nonatomic,strong) UIImageView *preview;
 @property(nonatomic,strong) UIView *previewArea;
 @property(nonatomic,strong) UIButton *closeButton;
-@property(nonatomic,strong) UIButton *stopButton;
 @property(nonatomic,strong) UIButton *openButton;
 @property(nonatomic,copy) void (^onOpen)(void);
-@property(nonatomic,copy) void (^onStop)(void);
 @property(nonatomic,copy) void (^onClose)(void);
 - (void)configure:(EmTabPreview *)tab;
 - (void)displayImage:(UIImage *)image;
@@ -39,11 +37,9 @@
         self.placeholder.textAlignment=NSTextAlignmentCenter;self.placeholder.font=[UIFont systemFontOfSize:12];
         self.placeholder.textColor=[UIColor colorWithWhite:0.55 alpha:1];
         self.closeButton=[self icon:EmControlClose action:@selector(closeTab)];
-        self.stopButton=[self icon:EmControlStop action:@selector(stopTab)];
-        self.stopButton.tintColor=[UIColor colorWithRed:1 green:0.3 blue:0.3 alpha:1];
         self.openButton=[self icon:EmControlExpand action:@selector(openTab)];
         self.openButton.tintColor=UIColor.systemBlueColor;
-        for(UIView *view in @[self.heading,self.state,self.previewArea,self.closeButton,self.stopButton,self.openButton]){
+        for(UIView *view in @[self.heading,self.state,self.previewArea,self.closeButton,self.openButton]){
             view.translatesAutoresizingMaskIntoConstraints=NO;[self.contentView addSubview:view];
         }
         for(UIView *view in @[self.preview,self.placeholder]){
@@ -70,11 +66,8 @@
             [self.openButton.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor],
             [self.openButton.bottomAnchor constraintEqualToAnchor:self.contentView.bottomAnchor],
             [self.openButton.widthAnchor constraintEqualToConstant:44],[self.openButton.heightAnchor constraintEqualToConstant:44],
-            [self.stopButton.trailingAnchor constraintEqualToAnchor:self.openButton.leadingAnchor],
-            [self.stopButton.bottomAnchor constraintEqualToAnchor:self.contentView.bottomAnchor],
-            [self.stopButton.widthAnchor constraintEqualToConstant:44],[self.stopButton.heightAnchor constraintEqualToConstant:44],
             [self.state.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:10],
-            [self.state.trailingAnchor constraintEqualToAnchor:self.stopButton.leadingAnchor constant:-2],
+            [self.state.trailingAnchor constraintEqualToAnchor:self.openButton.leadingAnchor constant:-2],
             [self.state.centerYAnchor constraintEqualToAnchor:self.openButton.centerYAnchor]]];
     }
     return self;
@@ -86,30 +79,26 @@
 - (void)configure:(EmTabPreview *)tab {
     self.tabId=tab.tabId;
     self.heading.text=tab.title;
-    self.state.text=tab.stopping?@"Stopping":tab.finished?@"Stopped":tab.sleeping?@"Sleep":@"Active";
+    self.state.text=tab.stopping?@"Closing":tab.finished?@"Stopped":tab.sleeping?@"Sleep":@"Active";
     self.state.textColor=tab.stopping?[UIColor colorWithRed:1 green:0.75 blue:0.25 alpha:1]:
         tab.finished || tab.sleeping?UIColor.lightGrayColor:[UIColor colorWithRed:0.4 green:0.9 blue:0.65 alpha:1];
     self.state.accessibilityValue=tab.status;
     self.contentView.layer.borderWidth=tab.active?2:1;
     self.contentView.layer.borderColor=(tab.active?UIColor.systemBlueColor:[UIColor colorWithWhite:0.22 alpha:1]).CGColor;
-    self.stopButton.enabled=!tab.finished && !tab.stopping;
+    self.userInteractionEnabled=!tab.stopping;
     self.closeButton.accessibilityLabel=[@"Close tab: " stringByAppendingString:tab.title];
     self.closeButton.accessibilityHint=@"Stops the game and removes this tab.";
-    self.stopButton.accessibilityLabel=[@"Stop game: " stringByAppendingString:tab.title];
-    self.stopButton.accessibilityHint=@"Keeps the tab and its last image.";
     self.openButton.accessibilityLabel=[@"Open tab: " stringByAppendingString:tab.title];
     self.closeButton.accessibilityIdentifier=[NSString stringWithFormat:@"tab-%d-close",tab.tabId];
-    self.stopButton.accessibilityIdentifier=[NSString stringWithFormat:@"tab-%d-stop",tab.tabId];
     self.openButton.accessibilityIdentifier=[NSString stringWithFormat:@"tab-%d-open",tab.tabId];
-    self.placeholder.text=tab.finished?@"Game stopped":@"Waiting for game…";
+    self.placeholder.text=tab.stopping?@"Closing tab…":tab.finished?@"Game stopped":@"Waiting for game…";
     [self displayImage:tab.image];
 }
 - (void)displayImage:(UIImage *)image {self.preview.image=image;self.placeholder.hidden=image!=nil;}
 - (void)openTab {if(self.onOpen)self.onOpen();}
-- (void)stopTab {if(self.onStop)self.onStop();}
 - (void)closeTab {if(self.onClose)self.onClose();}
 - (void)prepareForReuse {
-    [super prepareForReuse];self.preview.image=nil;self.onOpen=nil;self.onStop=nil;self.onClose=nil;
+    [super prepareForReuse];self.preview.image=nil;self.onOpen=nil;self.onClose=nil;
 }
 @end
 
@@ -147,7 +136,6 @@
     EmTabPreview *tab=self.tabs[indexPath.item];[cell configure:tab];int tabId=tab.tabId;
     __weak TabOverviewController *weakSelf=self;
     cell.onOpen=^{if(weakSelf.onSelectTab)weakSelf.onSelectTab(tabId);};
-    cell.onStop=^{if(weakSelf.onStopTab)weakSelf.onStopTab(tabId);};
     cell.onClose=^{if(weakSelf.onCloseTab)weakSelf.onCloseTab(tabId);};
     return cell;
 }

@@ -14,7 +14,6 @@
 
 @interface TabOverviewController : UICollectionViewController <UICollectionViewDelegateFlowLayout>
 @property(nonatomic,copy) void (^onSelectTab)(int tabId);
-@property(nonatomic,copy) void (^onStopTab)(int tabId);
 @property(nonatomic,copy) void (^onCloseTab)(int tabId);
 - (void)displayTabs:(NSArray<EmTabPreview *> *)tabs;
 - (void)updateImage:(UIImage *)image forTab:(int)tabId;

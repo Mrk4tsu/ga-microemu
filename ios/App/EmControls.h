@@ -1,7 +1,7 @@
 #import <UIKit/UIKit.h>
 
 typedef NS_ENUM(NSInteger, EmControlIcon) {
-    EmControlStop, EmControlAdd, EmControlTabs, EmControlKeyboard, EmControlLog,
+    EmControlAdd, EmControlTabs, EmControlKeyboard, EmControlLog,
     EmControlClose, EmControlExpand, EmControlPad, EmControlPadHidden, EmControlCollapse, EmControlImport
 };
 

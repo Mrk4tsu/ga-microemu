@@ -342,7 +342,6 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
 @property(nonatomic) BOOL started;
 @property(nonatomic) BOOL finished;
 @property(nonatomic) BOOL stopping;
-@property(nonatomic) BOOL closeWhenFinished;
 @property(nonatomic) BOOL sleeping;
 @property(nonatomic) BOOL fullScreen;
 @property(nonatomic,strong) NSDictionary *modalInfo;
@@ -386,7 +385,7 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
 @property(nonatomic) BOOL closingHost;
 @property(nonatomic) BOOL choosingResolution;
 @property(nonatomic,strong) NSMutableArray<NSURL*> *pendingLaunches;
-@property(nonatomic,strong) UIBarButtonItem *stopItem;
+@property(nonatomic,strong) UIBarButtonItem *closeTabItem;
 @property(nonatomic,strong) UIBarButtonItem *addTabItem;
 @property(nonatomic,strong) UIBarButtonItem *logItem;
 @property(nonatomic,strong) UIBarButtonItem *keyboardItem;
@@ -406,9 +405,9 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
     self.navigationItem.largeTitleDisplayMode=UINavigationItemLargeTitleDisplayModeNever;
     self.navigationItem.hidesBackButton=YES;
     self.pendingLaunches=[NSMutableArray new];self.tabs=[NSMutableArray new];self.padButtons=[NSMutableArray new];self.lastSentText=@"";
-    self.stopItem=EmIconItem(EmControlStop,@"Stop game",self,@selector(stop));
-    self.stopItem.tintColor=[UIColor colorWithRed:1 green:0.3 blue:0.3 alpha:1];
-    self.stopItem.accessibilityIdentifier=@"stop-game";
+    self.closeTabItem=EmIconItem(EmControlClose,@"Close tab",self,@selector(closeActiveTab));
+    self.closeTabItem.tintColor=[UIColor colorWithRed:1 green:0.3 blue:0.3 alpha:1];
+    self.closeTabItem.accessibilityIdentifier=@"close-tab";
     self.addTabItem=EmIconItem(EmControlAdd,@"New tab",self,@selector(newTab));
     self.addTabItem.accessibilityIdentifier=@"new-tab";
     self.logItem=EmIconItem(EmControlLog,@"Share log",self,@selector(shareLog));
@@ -593,14 +592,12 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
     [self.tabSelector setTitle:[NSString stringWithFormat:@"%lu",(unsigned long)self.tabs.count] forState:UIControlStateNormal];
     self.tabSelector.accessibilityValue=[NSString stringWithFormat:@"%lu tabs. %@",(unsigned long)self.tabs.count,active.jar.lastPathComponent?:@""];
     self.tabSelector.enabled=self.tabs.count>0 && !self.closingHost;
-    self.stopItem.image=EmControlImage(active.finished?EmControlClose:EmControlStop);
-    self.stopItem.accessibilityLabel=active.finished?@"Close tab":@"Stop game";
-    self.stopItem.enabled=active!=nil && !active.stopping && !self.closingHost;
+    self.closeTabItem.enabled=active!=nil && !active.stopping && !self.closingHost;
     self.addTabItem.enabled=!self.closingHost && !self.hostFinished;
     self.keyboardItem.enabled=active!=nil && !active.finished && !active.stopping && !self.closingHost;
     self.returnToGameItem.enabled=self.tabs.count>0 && !self.closingHost;
     self.logItem.enabled=!self.closingHost;
-    self.navigationItem.leftBarButtonItems=self.tabOverview?@[self.addTabItem]:@[self.stopItem,self.addTabItem];
+    self.navigationItem.leftBarButtonItems=self.tabOverview?@[self.addTabItem]:@[self.closeTabItem,self.addTabItem];
     self.navigationItem.rightBarButtonItems=self.tabOverview?@[self.logItem,self.returnToGameItem]:@[self.logItem,self.keyboardItem];
     [self refreshTabOverview];
 }
@@ -631,12 +628,11 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
     TabOverviewController *overview=[TabOverviewController new];self.tabOverview=overview;
     __weak GameController *weakSelf=self;
     overview.onSelectTab=^(int tabId){
-        GameController *owner=weakSelf;if(!owner || ![owner tabWithId:tabId])return;
+        GameController *owner=weakSelf;GameTab *tab=[owner tabWithId:tabId];if(!tab || tab.stopping)return;
         [owner hideTabOverview];
         if(owner.activeTabId==tabId)[owner restoreActiveModal];else [owner switchToTab:tabId];
     };
-    overview.onStopTab=^(int tabId){[weakSelf stopTab:tabId close:NO];};
-    overview.onCloseTab=^(int tabId){[weakSelf stopTab:tabId close:YES];};
+    overview.onCloseTab=^(int tabId){[weakSelf closeTabWithId:tabId];};
     [self addChildViewController:overview];
     overview.view.translatesAutoresizingMaskIntoConstraints=NO;[self.view addSubview:overview.view];
     UILayoutGuide *safe=self.view.safeAreaLayoutGuide;
@@ -1076,11 +1072,12 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
     int result=[info[@"result"] intValue];
     GameTab *tab=[self tabWithId:tabId];
     if(!tab)return;
-    // Take a pending final frame before the session's presentation queue is cleared.
-    [self consumeFrameForTab:tab];
+    BOOL wasClosing=tab.stopping;
+    // Preserve a final frame only when the game finished without a close request.
+    if(!wasClosing)[self consumeFrameForTab:tab];
     tab.finished=YES;tab.stopping=NO;tab.modalInfo=nil;
     EmClearFrame(tabId);
-    if(tab.closeWhenFinished){[self removeTab:tab];return;}
+    if(wasClosing){[self removeTab:tab];return;}
     tab.statusText=result==0?@"Game stopped":[NSString stringWithFormat:@"Failed at %d × %d — see Log; try a smaller screen",tab.virtualWidth,tab.virtualHeight];
     if(tabId==self.activeTabId){
         self.status.text=tab.statusText;
@@ -1137,23 +1134,22 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
     for(GameTab *tab in self.tabs)if(!tab.finished)em_tab_event(tab.tabId,9,0,0,0,NULL);
     [self updateMetrics];
 }
-- (void)stop {
+- (void)closeActiveTab {
     GameTab *tab=[self activeTab];
     if(!tab){
         if(!self.hostStarted || self.hostFinished){runtimeActive=NO;[self close];}
         return;
     }
-    [self stopTab:tab.tabId close:NO];
+    [self closeTabWithId:tab.tabId];
 }
-- (void)stopTab:(int)tabId close:(BOOL)closeTab {
+- (void)closeTabWithId:(int)tabId {
     GameTab *tab=[self tabWithId:tabId];
     if(!tab || self.closingHost)return;
-    if(tab.finished || self.hostFinished){if(closeTab || tabId==self.activeTabId)[self removeTab:tab];return;}
-    // X may follow Stop before the worker finishes: remember the request, but
-    // keep the tab/RMS slot until native session cleanup acknowledges it.
-    if(closeTab)tab.closeWhenFinished=YES;
+    if(tab.finished || self.hostFinished){[self removeTab:tab];return;}
+    // Keep the tab/RMS slot reserved until native session cleanup acknowledges
+    // the close request; this path always removes the tab when it completes.
     if(tab.stopping)return;
-    tab.stopping=YES;tab.statusText=@"Stopping game…";
+    tab.stopping=YES;tab.statusText=@"Closing tab…";
     if(tabId==self.activeTabId){self.status.text=tab.statusText;[self cancelActiveInputs];}
     em_host_close_tab(tab.tabId);
     [self updateTabSelector];
