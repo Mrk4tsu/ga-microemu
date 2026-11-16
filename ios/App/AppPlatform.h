@@ -5,3 +5,4 @@ FOUNDATION_EXPORT NSString * const EmTabFinishedNotification;
 NSData *EmConsumeFrame(int tabId, int *width, int *height);
 void EmClearFrame(int tabId);
 void EmClearAllFrames(void);
+void EmSetPresentationEnabled(BOOL enabled);

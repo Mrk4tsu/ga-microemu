@@ -12,6 +12,7 @@ NSString * const EmModalNotification = @"MicroEmuModal";
 NSString * const EmTabFinishedNotification = @"MicroEmuTabFinished";
 static NSLock *frameLock;
 static NSMutableDictionary<NSNumber*, NSDictionary*> *pendingFrames;
+static BOOL presentationEnabled=YES;
 static void initializeFrames(void) {
     static dispatch_once_t once;
     dispatch_once(&once, ^{
@@ -42,12 +43,18 @@ void EmClearAllFrames(void) {
     [pendingFrames removeAllObjects];
     [frameLock unlock];
 }
+void EmSetPresentationEnabled(BOOL enabled) {
+    initializeFrames();[frameLock lock];presentationEnabled=enabled;
+    if(!enabled)[pendingFrames removeAllObjects];[frameLock unlock];
+}
 void em_platform_present(int tabId, const EmSurface *surface) {
     @autoreleasepool {
-        NSData *frame = [[NSData alloc] initWithBytes:surface->pixels length:(NSUInteger)surface->width * surface->height * 4];
         initializeFrames();
+        [frameLock lock];BOOL enabled=presentationEnabled;[frameLock unlock];
+        if(!enabled)return;
+        NSData *frame = [[NSData alloc] initWithBytes:surface->pixels length:(NSUInteger)surface->width * surface->height * 4];
         [frameLock lock];
-        pendingFrames[@(tabId)] = @{@"data": frame, @"w": @(surface->width), @"h": @(surface->height)};
+        if(presentationEnabled)pendingFrames[@(tabId)] = @{@"data": frame, @"w": @(surface->width), @"h": @(surface->height)};
         [frameLock unlock];
     }
 }
@@ -129,4 +136,9 @@ void em_platform_browse(const char *url) {
     }
 }
 void em_platform_vibrate(int milliseconds) {if(milliseconds>0)dispatch_async(dispatch_get_main_queue(), ^{AudioServicesPlaySystemSound(kSystemSoundID_Vibrate);});}
-void em_platform_tick(void) { }
+void em_platform_tick(void) {
+    static double lastHeartbeat;double now=NSProcessInfo.processInfo.systemUptime;
+    if(now-lastHeartbeat<30)return;lastHeartbeat=now;
+    initializeFrames();[frameLock lock];BOOL hidden=!presentationEnabled;[frameLock unlock];
+    if(hidden){fprintf(stdout,"[BACKGROUND] host heartbeat uptime=%.0f\n",now);fflush(stdout);}
+}

@@ -1,6 +1,7 @@
 """Verify XcodeGen spec paths and CLI root match the ios directory."""
 import importlib.util
 import json
+import plistlib
 from pathlib import Path
 import tempfile
 import unittest
@@ -16,7 +17,7 @@ module_spec.loader.exec_module(gen)
 class GenerateProjectTests(unittest.TestCase):
     def _create_fixture(self, root):
         ios = root / "ios"
-        for rel in ("App/MicroEmuApp.m", "native/bridge.c"):
+        for rel in ("App/MicroEmuApp.m", "App/BackgroundRunController.m", "native/bridge.c"):
             target = ios / rel
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("", encoding="utf-8")
@@ -59,16 +60,24 @@ class GenerateProjectTests(unittest.TestCase):
             self.assertEqual(release["GCC_SYMBOLS_PRIVATE_EXTERN"], "YES")
             deps = [d["sdk"] for d in spec["targets"]["MicroEmu"]["dependencies"]]
             self.assertNotIn("UniformTypeIdentifiers.framework", deps)
+            self.assertIn("AVFoundation.framework", deps)
             sources = spec["targets"]["MicroEmu"]["sources"]
             self.assertIn({"path": "App/Assets.xcassets"}, sources)
             self.assertIn({"path": "Runtime", "buildPhase": "resources", "type": "folder"}, sources)
             self.assertIn({"path": "App/MicroEmuApp.m"}, sources)
+            self.assertIn({"path": "App/BackgroundRunController.m"}, sources)
             self.assertIn({"path": "native/bridge.c"}, sources)
 
             run_mock.assert_called_once()
             cmd = run_mock.call_args[0][0]
             self.assertEqual(cmd[cmd.index("--project") + 1], str(ios))
             self.assertEqual(cmd[cmd.index("--project-root") + 1], str(ios))
+
+    def test_background_audio_declared_in_shipped_plist(self):
+        with (gen.IOS / "App/Info.plist").open("rb") as source:
+            info = plistlib.load(source)
+        self.assertIn("audio", info["UIBackgroundModes"])
+        self.assertNotIn("NSMicrophoneUsageDescription", info)
 
 
 if __name__ == "__main__":

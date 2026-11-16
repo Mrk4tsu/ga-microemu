@@ -8,12 +8,19 @@
 #import "TabOverviewController.h"
 #import "MemoryManager.h"
 #import "MemorySettingsController.h"
+#import "BackgroundRunController.h"
 #include "emulator.h"
+#include "background_policy.h"
 #include <math.h>
 #include <stdio.h>
 
 static BOOL runtimeActive;
 static NSString *const EmJarHostReadyNotification=@"GaEmulatorHostReady";
+static void emAllowLockedAccess(NSString *path) {
+    NSError *error=nil;
+    if(![NSFileManager.defaultManager setAttributes:@{NSFileProtectionKey:NSFileProtectionCompleteUntilFirstUserAuthentication} ofItemAtPath:path error:&error])
+        fprintf(stderr,"[BACKGROUND] file protection unavailable: %s\n",error.localizedDescription.UTF8String);
+}
 static NSURL *gamesDirectory(void) {
     NSURL *documents=[[[NSFileManager defaultManager] URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask] firstObject];
     NSURL *games=[documents URLByAppendingPathComponent:@"Games" isDirectory:YES];
@@ -74,6 +81,7 @@ static NSString *rmsPathForSlot(int slot) {
     NSURL *documents=[gamesDirectory() URLByDeletingLastPathComponent];
     NSURL *dir=slot<=1?[documents URLByAppendingPathComponent:@"RMS" isDirectory:YES]:[[documents URLByAppendingPathComponent:@"RMS-Tabs" isDirectory:YES] URLByAppendingPathComponent:[NSString stringWithFormat:@"tab-%d",slot] isDirectory:YES];
     [[NSFileManager defaultManager] createDirectoryAtURL:dir withIntermediateDirectories:YES attributes:nil error:nil];
+    emAllowLockedAccess(dir.path);
     return dir.path;
 }
 static float emCurrentCpuUsage(void) {
@@ -333,6 +341,7 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
 @property(nonatomic) BOOL started;
 @property(nonatomic) BOOL finished;
 @property(nonatomic) BOOL stopping;
+@property(nonatomic) BOOL backgroundPaused;
 @property(nonatomic) BOOL sleeping;
 @property(nonatomic) BOOL fullScreen;
 @property(nonatomic,strong) NSDictionary *modalInfo;
@@ -376,6 +385,7 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
 @property(nonatomic) BOOL closingHost;
 @property(nonatomic) BOOL choosingResolution;
 @property(nonatomic) BOOL configuringMemory;
+@property(nonatomic) BOOL appBackgrounded;
 @property(nonatomic,strong) NSMutableArray<NSURL*> *pendingLaunches;
 @property(nonatomic,strong) UIBarButtonItem *closeTabItem;
 @property(nonatomic,strong) UIBarButtonItem *addTabItem;
@@ -520,14 +530,13 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
     if(@available(iOS 15.0,*)){}else [nc addObserver:self selector:@selector(keyboardWillChangeFrame:) name:UIKeyboardWillChangeFrameNotification object:nil];
     [nc addObserver:self selector:@selector(keyboardWillHide:) name:UIKeyboardWillHideNotification object:nil];
     [nc addObserver:self selector:@selector(appDidEnterBackground) name:UIApplicationDidEnterBackgroundNotification object:nil];
-    [nc addObserver:self selector:@selector(appWillEnterForeground) name:UIApplicationWillEnterForegroundNotification object:nil];
+    [nc addObserver:self selector:@selector(appWillResignActive) name:UIApplicationWillResignActiveNotification object:nil];
+    [nc addObserver:self selector:@selector(appWillEnterForeground) name:UIApplicationDidBecomeActiveNotification object:nil];
+    [nc addObserver:self selector:@selector(backgroundRunChanged:) name:EmBackgroundRunChangedNotification object:nil];
     [nc addObserver:self selector:@selector(compactBackgroundPreviews:) name:EmMemoryWillCleanNotification object:nil];
     self.displayLink=[CADisplayLink displayLinkWithTarget:self selector:@selector(frame)];self.displayLink.preferredFramesPerSecond=30;[self.displayLink addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
     self.navigationController.interactivePopGestureRecognizer.enabled=NO;[UIApplication sharedApplication].idleTimerDisabled=YES;
-    __weak GameController *weakSelf=self;
-    self.metricsTimer=[NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer*t){
-        [weakSelf updateMetrics];
-    }];
+    [self startMetricsTimer];
     [self updateMetrics];
     EmClearAllFrames();em_reset_events();runtimeActive=YES;
 }
@@ -579,6 +588,10 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
         self.metricsLabel.textColor=emSecondaryLabelColor();
     }
 }
+- (void)startMetricsTimer {
+    if(self.metricsTimer)return;__weak GameController *weakSelf=self;
+    self.metricsTimer=[NSTimer scheduledTimerWithTimeInterval:1 repeats:YES block:^(NSTimer *timer){[weakSelf updateMetrics];}];
+}
 - (void)updateTabSelector {
     GameTab *active=[self activeTab];
     EmSetButtonIcon(self.tabSelector,EmControlTabs,self.tabOverview?@"Return to game":@"Show tabs");
@@ -593,6 +606,8 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
     self.navigationItem.leftBarButtonItems=self.tabOverview?@[self.addTabItem]:@[self.closeTabItem,self.addTabItem];
     self.navigationItem.rightBarButtonItems=self.tabOverview?@[self.menuItem,self.returnToGameItem]:@[self.menuItem,self.keyboardItem];
     [self refreshTabOverview];
+    NSUInteger running=0;for(GameTab *tab in self.tabs)if(!tab.finished)running++;
+    [BackgroundRunController.shared setRunningGameCount:running];
 }
 - (void)refreshTabOverview {
     if(!self.tabOverview)return;
@@ -678,6 +693,11 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
     [[NSNotificationCenter defaultCenter] postNotificationName:EmJarHostReadyNotification object:self];
 }
 - (void)cancelActiveInputs {
+    GameTab *tab=[self activeTab];
+    if(self.textModal.textFields.count && tab.modalInfo){
+        NSMutableDictionary *saved=[tab.modalInfo mutableCopy];
+        saved[@"value"]=self.textModal.textFields.firstObject.text?:@"";tab.modalInfo=saved;
+    }
     [self hideKeyboard];
     [self.screen cancelPointer];
     for(GamePadButton *button in self.padButtons){
@@ -716,7 +736,7 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
         [self modalChanged:[NSNotification notificationWithName:EmModalNotification object:tab.modalInfo]];
 }
 - (void)processLaunchQueue {
-    if(self.choosingResolution || self.configuringMemory || self.closingHost || self.hostFinished || !self.pendingLaunches.count)return;
+    if(self.appBackgrounded || self.choosingResolution || self.configuringMemory || self.closingHost || self.hostFinished || !self.pendingLaunches.count)return;
     __weak GameController *weakSelf=self;
     if(self.presentedViewController){
         if(self.presentedViewController==self.textModal)self.textModal=nil;
@@ -763,6 +783,8 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
 }
 - (void)launchNewTabWithJar:(NSURL*)jarURL width:(int)width height:(int)height fullScreen:(BOOL)fullScreen {
     if(!jarURL || self.closingHost || self.hostFinished || !em_viewport_valid(width,height))return;
+    // Imported files can retain a protection class that blocks new ZIP reads on lock.
+    emAllowLockedAccess(jarURL.path);
     [self hideTabOverview];
     [self cancelActiveInputs];
     GameTab *previous=[self activeTab];
@@ -1031,7 +1053,7 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
     int tabId=[info[@"tabId"] intValue];
     GameTab *tab=[self tabWithId:tabId];
     if(tab)tab.modalInfo=info[@"title"]==NSNull.null?nil:info;
-    if(tabId!=self.activeTabId || self.choosingResolution || self.configuringMemory || self.tabOverview)return;
+    if(tabId!=self.activeTabId || self.choosingResolution || self.configuringMemory || self.tabOverview || self.appBackgrounded)return;
     if(info[@"title"]==NSNull.null){[self.textModal dismissViewControllerAnimated:NO completion:nil];self.textModal=nil;return;}
     if(!tab || tab.finished || tab.stopping)return;
     [self hideKeyboard];
@@ -1128,8 +1150,17 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
 - (void)showGameMenu {
     if(self.presentedViewController || self.closingHost || self.choosingResolution || self.configuringMemory)return;
     [self cancelActiveInputs];
-    UIAlertController *menu=[UIAlertController alertControllerWithTitle:@"GaEmulator" message:nil preferredStyle:UIAlertControllerStyleActionSheet];
+    BackgroundRunController *background=BackgroundRunController.shared;
+    UIAlertController *menu=[UIAlertController alertControllerWithTitle:@"GaEmulator" message:background.statusText preferredStyle:UIAlertControllerStyleActionSheet];
     __weak GameController *weakSelf=self;
+    [menu addAction:[UIAlertAction actionWithTitle:background.enabled?@"Tắt chạy nền":@"Bật chạy nền (thử nghiệm)" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
+        [weakSelf dismissViewControllerAnimated:YES completion:^{[weakSelf setBackgroundRunEnabled:!background.enabled];}];
+    }]];
+    if(background.enabled && !background.keepingAlive){
+        [menu addAction:[UIAlertAction actionWithTitle:@"Thử lại chạy nền" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
+            [weakSelf dismissViewControllerAnimated:YES completion:^{[weakSelf setBackgroundRunEnabled:YES];}];
+        }]];
+    }
     [menu addAction:[UIAlertAction actionWithTitle:@"Quản lý bộ nhớ" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
         [weakSelf dismissViewControllerAnimated:YES completion:^{[weakSelf showMemorySettings];}];
     }]];
@@ -1167,11 +1198,40 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
     [self.keyboardField becomeFirstResponder];
 }
 - (void)appDidEnterBackground {
-    for(GameTab *tab in self.tabs)if(!tab.finished)em_tab_event(tab.tabId,8,0,0,0,NULL);
+    [self cancelActiveInputs];self.appBackgrounded=YES;[self appWillResignActive];
+    [self applyAppBackgroundState];
+    fprintf(stdout,"[BACKGROUND] entered keep_alive=%d tabs=%lu\n",BackgroundRunController.shared.keepingAlive,(unsigned long)self.tabs.count);fflush(stdout);
 }
 - (void)appWillEnterForeground {
-    for(GameTab *tab in self.tabs)if(!tab.finished)em_tab_event(tab.tabId,9,0,0,0,NULL);
-    [self updateMetrics];
+    self.appBackgrounded=NO;self.displayLink.paused=NO;
+    [self applyAppBackgroundState];[self startMetricsTimer];[self updateMetrics];[self restoreActiveModal];[self processLaunchQueue];
+    fprintf(stdout,"[BACKGROUND] foreground\n");fflush(stdout);
+}
+- (void)appWillResignActive {
+    self.displayLink.paused=YES;[self.metricsTimer invalidate];self.metricsTimer=nil;
+}
+- (void)applyAppBackgroundState {
+    BOOL keepAlive=BackgroundRunController.shared.keepingAlive;
+    for(GameTab *tab in self.tabs){
+        if(tab.finished || tab.stopping)continue;
+        EmBackgroundDecision decision=em_background_decide(self.appBackgrounded,keepAlive,tab.sleeping,tab.backgroundPaused);
+        tab.backgroundPaused=decision.paused;
+        em_host_sleep_tab(tab.tabId,decision.sleeping);
+        if(decision.lifecycle)em_tab_event(tab.tabId,decision.lifecycle,0,0,0,NULL);
+    }
+}
+- (void)backgroundRunChanged:(NSNotification *)notification {
+    [self applyAppBackgroundState];
+}
+- (void)setBackgroundRunEnabled:(BOOL)enabled {
+    NSError *error=nil;
+    if(![BackgroundRunController.shared setEnabled:enabled error:&error]){
+        fprintf(stderr,"[BACKGROUND] toggle failed: %s\n",error.localizedDescription.UTF8String);
+        UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"Chưa bật được chạy nền" message:@"Âm thanh nền chưa sẵn sàng. Hãy thử lại sau." preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:alert animated:YES completion:nil];
+    }
+    [self applyAppBackgroundState];
 }
 - (void)closeActiveTab {
     GameTab *tab=[self activeTab];
@@ -1194,6 +1254,7 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
     [self updateTabSelector];
 }
 - (void)close {
+    [BackgroundRunController.shared setRunningGameCount:0];
     [self hideTabOverview];
     [self.metricsTimer invalidate];self.metricsTimer=nil;
     [self.displayLink invalidate];self.displayLink=nil;
@@ -1356,6 +1417,7 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
 - (BOOL)application:(UIApplication*)application didFinishLaunchingWithOptions:(NSDictionary*)options {
     em_configure_memory_bytes([NSProcessInfo processInfo].physicalMemory);
     [MemoryManager shared];
+    [BackgroundRunController shared];
     self.incomingJars=[NSMutableArray new];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(jarHostReady:) name:EmJarHostReadyNotification object:nil];
     self.window=[[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];

@@ -56,7 +56,7 @@ def generate(runtime, spec_only=False):
                 {"path": _relative_source(IOS / "App/Assets.xcassets")},
                 {"path": _relative_source(IOS / "Runtime"), "buildPhase": "resources", "type": "folder"}],
             "dependencies": [{"sdk": name + ".framework"} for name in
-                ("UIKit", "Foundation", "CoreGraphics", "CoreText", "QuartzCore", "AudioToolbox", "Security")],
+                ("UIKit", "Foundation", "CoreGraphics", "CoreText", "QuartzCore", "AudioToolbox", "AVFoundation", "Security")],
             "scheme": {"gatherCoverageData": False}}},
     }
     # Use Runtime (not Resources) at the .app root so iOS CFBundle does not

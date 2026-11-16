@@ -1,4 +1,5 @@
 #include "emulator.h"
+#include "background_policy.h"
 #include "tinycthread.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -33,6 +34,7 @@ static unsigned char *font_data;
 static int have_font;
 static long control_offset;
 static double control_scanned;
+static int background_paused;
 typedef struct { int ms, type, a, b; } Scheduled;
 static Scheduled schedule[256];
 static int scheduled, next_event;
@@ -151,6 +153,13 @@ void em_platform_modal(int tab_id, const char *t, const char *v, int max, int co
     }
 }
 static void test_event(int type, int a, int b, int c, const char *text) {
+    if(type==98 && getenv("MICROEMU_BACKGROUND_TEST")) {
+        EmBackgroundDecision d=em_background_decide(a,b,0,background_paused);
+        background_paused=d.paused;em_host_sleep_tab(1,d.sleeping);
+        if(d.lifecycle)em_tab_event(1,d.lifecycle,0,0,0,NULL);
+        printf("[BACKGROUND_TEST] hidden=%d audio=%d sleeping=%d lifecycle=%d\n",a,b,d.sleeping,d.lifecycle);
+        return;
+    }
     if (host_mode) em_tab_event(1, type, a, b, c, text);
     else em_event(type, a, b, c, text);
 }
