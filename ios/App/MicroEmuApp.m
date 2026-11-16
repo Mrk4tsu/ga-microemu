@@ -1,7 +1,6 @@
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
 #import <CommonCrypto/CommonDigest.h>
-#import <mach/mach.h>
 #import "AppPlatform.h"
 #import "ScreenSizePicker.h"
 #import "EmControls.h"
@@ -83,23 +82,6 @@ static NSString *rmsPathForSlot(int slot) {
     [[NSFileManager defaultManager] createDirectoryAtURL:dir withIntermediateDirectories:YES attributes:nil error:nil];
     emAllowLockedAccess(dir.path);
     return dir.path;
-}
-static float emCurrentCpuUsage(void) {
-    thread_array_t thread_list;
-    mach_msg_type_number_t thread_count=0;
-    if(task_threads(mach_task_self(),&thread_list,&thread_count)!=KERN_SUCCESS)return -1.0f;
-    float tot_cpu=0.0f;
-    for(mach_msg_type_number_t i=0;i<thread_count;i++){
-        thread_basic_info_data_t thinfo;
-        mach_msg_type_number_t thread_info_count=THREAD_BASIC_INFO_COUNT;
-        if(thread_info(thread_list[i],THREAD_BASIC_INFO,(thread_info_t)&thinfo,&thread_info_count)==KERN_SUCCESS){
-            if(!(thinfo.flags & TH_FLAGS_IDLE)){
-                tot_cpu+=thinfo.cpu_usage/(float)TH_USAGE_SCALE*100.0f;
-            }
-        }
-    }
-    vm_deallocate(mach_task_self(),(vm_offset_t)thread_list,thread_count*sizeof(thread_t));
-    return tot_cpu;
 }
 static UIColor *emSecondaryLabelColor(void) {
     if(@available(iOS 13.0,*))return UIColor.secondaryLabelColor;
@@ -566,7 +548,7 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
 - (void)updateMetrics {
     uint64_t appMem=EmAppMemoryBytes();
     uint64_t totalMem=[NSProcessInfo processInfo].physicalMemory;
-    float cpu=emCurrentCpuUsage();
+    float cpu=EmAppCpuUsage();
     double appMB=(double)appMem/(1024.0*1024.0);
     double totalGB=(double)totalMem/(1024.0*1024.0*1024.0);
     double ratio=totalMem>0?((double)appMem/(double)totalMem):0.0;
@@ -1151,7 +1133,8 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
     if(self.presentedViewController || self.closingHost || self.choosingResolution || self.configuringMemory)return;
     [self cancelActiveInputs];
     BackgroundRunController *background=BackgroundRunController.shared;
-    UIAlertController *menu=[UIAlertController alertControllerWithTitle:@"GaEmulator" message:background.statusText preferredStyle:UIAlertControllerStyleActionSheet];
+    NSString *message=[NSString stringWithFormat:@"%@\nChạy nền có thể tạm dừng nhạc từ app khác.",background.statusText];
+    UIAlertController *menu=[UIAlertController alertControllerWithTitle:@"GaEmulator" message:message preferredStyle:UIAlertControllerStyleActionSheet];
     __weak GameController *weakSelf=self;
     [menu addAction:[UIAlertAction actionWithTitle:background.enabled?@"Tắt chạy nền":@"Bật chạy nền (thử nghiệm)" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
         [weakSelf dismissViewControllerAnimated:YES completion:^{[weakSelf setBackgroundRunEnabled:!background.enabled];}];

@@ -3,6 +3,7 @@
 
 FOUNDATION_EXPORT NSString *const EmMemoryWillCleanNotification;
 uint64_t EmAppMemoryBytes(void);
+float EmAppCpuUsage(void);
 
 @interface MemoryManager : NSObject
 + (instancetype)shared;

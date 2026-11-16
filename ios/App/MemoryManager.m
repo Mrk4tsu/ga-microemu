@@ -8,6 +8,21 @@
 NSString *const EmMemoryWillCleanNotification=@"GaEmulatorMemoryWillClean";
 static NSString *const settingsKey=@"GaEmulator.MemorySettings";
 static uint64_t uptimeMS(void) {return (uint64_t)(NSProcessInfo.processInfo.systemUptime*1000);}
+float EmAppCpuUsage(void) {
+    thread_array_t threads;mach_msg_type_number_t count=0;
+    if(task_threads(mach_task_self(),&threads,&count)!=KERN_SUCCESS)return -1;
+    float usage=0;BOOL measured=NO;
+    for(mach_msg_type_number_t i=0;i<count;i++){
+        thread_basic_info_data_t info;mach_msg_type_number_t length=THREAD_BASIC_INFO_COUNT;
+        if(thread_info(threads[i],THREAD_BASIC_INFO,(thread_info_t)&info,&length)==KERN_SUCCESS){
+            measured=YES;
+            if(!(info.flags&TH_FLAGS_IDLE))usage+=info.cpu_usage/(float)TH_USAGE_SCALE*100;
+        }
+        mach_port_deallocate(mach_task_self(),threads[i]);
+    }
+    vm_deallocate(mach_task_self(),(vm_address_t)threads,count*sizeof(thread_t));
+    return measured?usage:-1;
+}
 uint64_t EmAppMemoryBytes(void) {
     task_vm_info_data_t info;mach_msg_type_number_t count=TASK_VM_INFO_COUNT;
     if(task_info(mach_task_self(),TASK_VM_INFO,(task_info_t)&info,&count)==KERN_SUCCESS && info.phys_footprint>0)return info.phys_footprint;

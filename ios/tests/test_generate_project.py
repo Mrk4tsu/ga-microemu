@@ -17,7 +17,7 @@ module_spec.loader.exec_module(gen)
 class GenerateProjectTests(unittest.TestCase):
     def _create_fixture(self, root):
         ios = root / "ios"
-        for rel in ("App/MicroEmuApp.m", "App/BackgroundRunController.m", "App/BackgroundNotificationController.m", "native/bridge.c"):
+        for rel in ("App/MicroEmuApp.m", "App/BackgroundRunController.m", "App/BackgroundNowPlayingController.m", "native/bridge.c"):
             target = ios / rel
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("", encoding="utf-8")
@@ -61,13 +61,14 @@ class GenerateProjectTests(unittest.TestCase):
             deps = [d["sdk"] for d in spec["targets"]["MicroEmu"]["dependencies"]]
             self.assertNotIn("UniformTypeIdentifiers.framework", deps)
             self.assertIn("AVFoundation.framework", deps)
+            self.assertIn("MediaPlayer.framework", deps)
             self.assertIn("UserNotifications.framework", deps)
             sources = spec["targets"]["MicroEmu"]["sources"]
             self.assertIn({"path": "App/Assets.xcassets"}, sources)
             self.assertIn({"path": "Runtime", "buildPhase": "resources", "type": "folder"}, sources)
             self.assertIn({"path": "App/MicroEmuApp.m"}, sources)
             self.assertIn({"path": "App/BackgroundRunController.m"}, sources)
-            self.assertIn({"path": "App/BackgroundNotificationController.m"}, sources)
+            self.assertIn({"path": "App/BackgroundNowPlayingController.m"}, sources)
             self.assertIn({"path": "native/bridge.c"}, sources)
 
             run_mock.assert_called_once()

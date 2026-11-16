@@ -3,6 +3,24 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <string.h>
+#include <stdio.h>
+#include <math.h>
+
+typedef enum { EM_BACKGROUND_OFF, EM_BACKGROUND_RUNNING, EM_BACKGROUND_PAUSED, EM_BACKGROUND_INTERRUPTED } EmBackgroundStatus;
+static inline EmBackgroundStatus em_background_status(int enabled,size_t games,int audio_active,int user_paused) {
+    if(!enabled || !games)return EM_BACKGROUND_OFF;
+    if(user_paused)return EM_BACKGROUND_PAUSED;
+    return audio_active?EM_BACKGROUND_RUNNING:EM_BACKGROUND_INTERRUPTED;
+}
+static inline int em_background_metrics(char *text,size_t size,uint64_t memory_bytes,double cpu,size_t tabs) {
+    if(!text || !size)return 0;
+    char memory[32],usage[32];
+    if(memory_bytes)snprintf(memory,sizeof(memory),"RAM %.0fMB",memory_bytes/1048576.0);
+    else snprintf(memory,sizeof(memory),"RAM --");
+    if(isfinite(cpu) && cpu>=0)snprintf(usage,sizeof(usage),"CPU %.0f%%",cpu);
+    else snprintf(usage,sizeof(usage),"CPU --");
+    return snprintf(text,size,"%s | %s | Tab %zu",memory,usage,tabs);
+}
 
 typedef struct EmBackgroundDecision { int paused, lifecycle, sleeping; } EmBackgroundDecision;
 /* Lifecycle callbacks are edge-triggered: a kept-alive game must not receive
