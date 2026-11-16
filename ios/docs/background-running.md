@@ -2,6 +2,10 @@
 
 Mở game, chọn **☰ → Bật chạy nền (thử nghiệm)**, rồi chuyển sang app khác hoặc khóa màn hình. Chọn **Tắt chạy nền** để trở về chế độ cũ. Lựa chọn mặc định tắt và được lưu qua các lần mở app. Vuốt tắt hẳn app vẫn chấm dứt mọi game.
 
+Cho phép thông báo khi app hỏi. Khi chạy nền, Trung tâm thông báo/màn hình khóa có thông báo **“Chạy nền đã bật”** và số game; chạm để mở app. Nếu đã từ chối, bật lại tại **Cài đặt → Thông báo → GaEmulator**. Cách hiển thị còn tùy cài đặt màn hình khóa, Tập trung và Tóm tắt thông báo của máy.
+
+Thông báo không phát tiếng, dùng một mục trạng thái và đổi thành **“Chạy nền bị gián đoạn”** nếu âm thanh nền dừng. Khi quay lại app, tắt chạy nền hoặc game cuối cùng kết thúc, app xóa mục này. Người dùng có thể xóa thông báo; app không liên tục đăng lại. Nếu iOS kết thúc tiến trình, thông báo cũ có thể còn đến khi bị xóa hoặc app mở lại. Thông báo chỉ thể hiện trạng thái đã ghi nhận, không chứng minh game vẫn hoạt động và không kéo dài quyền chạy nền.
+
 Đây là cách thử giữ tiến trình bằng một đoạn âm thanh im lặng lặp lại, không phải quyền chạy game vô hạn của iOS. Chưa kiểm thử bằng IPA trên iPhone. Chạy nền có thể tốn pin, nóng máy, mất kết nối hoặc bị iOS đình chỉ. Đích build vẫn là iOS 12 trở lên, dùng được API trên iPhone 6; chưa có bằng chứng chạy nền ổn định trên mọi đời iOS.
 
 ## Cơ chế
@@ -13,6 +17,8 @@ Mở game, chọn **☰ → Bật chạy nền (thử nghiệm)**, rồi chuyể
 - JAR đang mở và thư mục gốc RMS dùng bảo vệ file `CompleteUntilFirstUserAuthentication`: dữ liệu vẫn mã hóa, có thể đọc sau lần mở khóa đầu tiên dù màn hình khóa lại. Không đặt `NSFileProtectionNone` hoặc sửa đệ quy dữ liệu khác.
 
 Apple mô tả âm thanh nền/khóa màn hình cho ứng dụng phát âm thanh ở [Playback](https://developer.apple.com/documentation/avfaudio/avaudiosession/category-swift.struct/playback), xử lý [gián đoạn âm thanh](https://developer.apple.com/library/archive/documentation/Audio/Conceptual/AudioSessionProgrammingGuide/HandlingAudioInterruptions/HandlingAudioInterruptions.html) và [bảo vệ file sau lần mở khóa đầu](https://developer.apple.com/documentation/foundation/fileprotectiontype/completeuntilfirstuserauthentication). Các tài liệu này không bảo đảm vòng âm thanh im lặng giữ một emulator chạy liên tục hay được chấp nhận khi phát hành App Store. Chế độ này cần đánh giá thực tế trên bản IPA cài thử.
+
+Trạng thái dùng [thông báo cục bộ của iOS](https://developer.apple.com/documentation/usernotifications/scheduling-a-notification-locally-from-your-app), có từ trước iOS 12; không dùng máy chủ push, APNs, Live Activities hoặc quyền `remote-notification`. App [xin quyền thông báo trong ngữ cảnh sử dụng](https://developer.apple.com/documentation/usernotifications/asking-permission-to-use-notifications) và kiểm tra lại trước khi gửi. Yêu cầu gửi được nối tiếp; phản hồi đến muộn sau khi quay lại app/tắt chế độ sẽ bị hủy để tránh thông báo cũ hiện lại.
 
 ## Kiểm chứng
 
@@ -26,3 +32,4 @@ Trên iPhone 6/iOS 12 và một máy iOS mới, cần thử:
 2. Quay lại vài lần: không thêm luồng game, tốc độ và tab hiện tại phục hồi; tab khác vẫn sleep.
 3. Nhận cuộc gọi, phát nhạc app khác, đổi tai nghe và thử khôi phục. Tắt tùy chọn để so sánh với pause/resume mặc định.
 4. Khóa máy khi game còn tải tài nguyên hoặc ghi RMS; mở lại kiểm tra dữ liệu. Đóng mọi tab để kiểm tra âm thanh nền dừng; mở app lại kiểm tra lựa chọn đã lưu.
+5. Cho phép/từ chối thông báo, đổi quyền trong Cài đặt rồi thử lại; kiểm tra thông báo khi khóa máy, khi gián đoạn và khi chạm mở app. Thử chuyển app/quay lại nhanh để kiểm tra thông báo cũ không hiện lại; đóng game cuối cùng để kiểm tra tự xóa. Xóa thủ công thông báo và xác nhận app không đăng lại liên tục.

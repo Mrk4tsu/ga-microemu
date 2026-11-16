@@ -1,4 +1,5 @@
 #import "BackgroundRunController.h"
+#import "BackgroundNotificationController.h"
 #import "AppPlatform.h"
 #import <AVFoundation/AVFoundation.h>
 #import <UIKit/UIKit.h>
@@ -15,6 +16,7 @@ static NSString *const enabledKey=@"GaEmulator.BackgroundRun";
 @property(nonatomic) NSUInteger runningGames;
 @property(nonatomic) BOOL interrupted;
 @property(nonatomic) BOOL sessionOwned;
+@property(nonatomic,strong) BackgroundNotificationController *notifications;
 - (BOOL)startAudio:(NSError **)error;
 - (void)stopAudio;
 @end
@@ -26,6 +28,7 @@ static NSString *const enabledKey=@"GaEmulator.BackgroundRun";
 - (instancetype)init {
     if((self=[super init])){
         _enabled=[NSUserDefaults.standardUserDefaults boolForKey:enabledKey];
+        _notifications=[BackgroundNotificationController new];
         NSNotificationCenter *nc=NSNotificationCenter.defaultCenter;
         [nc addObserver:self selector:@selector(willResignActive:) name:UIApplicationWillResignActiveNotification object:nil];
         [nc addObserver:self selector:@selector(didBecomeActive:) name:UIApplicationDidBecomeActiveNotification object:nil];
@@ -40,6 +43,7 @@ static NSString *const enabledKey=@"GaEmulator.BackgroundRun";
     return self.runningGames && !self.keepingAlive?@"Chạy nền: Gián đoạn":@"Chạy nền: Bật";
 }
 - (void)notifyChanged {
+    [self.notifications updateEnabled:self.enabled audioActive:self.keepingAlive gameCount:self.runningGames];
     [[NSNotificationCenter defaultCenter] postNotificationName:EmBackgroundRunChangedNotification object:self];
 }
 - (void)setAlive:(BOOL)alive {
@@ -55,7 +59,9 @@ static NSString *const enabledKey=@"GaEmulator.BackgroundRun";
     }
     if(!enabled)[self stopAudio];
     [NSUserDefaults.standardUserDefaults setBool:enabled forKey:enabledKey];
-    [self notifyChanged];return YES;
+    [self notifyChanged];
+    if(enabled)[self.notifications requestPermissionIfNeeded];
+    return YES;
 }
 - (void)setRunningGameCount:(NSUInteger)count {
     if(self.runningGames==count)return;
@@ -66,6 +72,7 @@ static NSString *const enabledKey=@"GaEmulator.BackgroundRun";
         if(![self startAudio:&error]){fprintf(stderr,"[BACKGROUND] start failed: %s\n",error.localizedDescription.UTF8String);}
     }
     [self notifyChanged];
+    if(count && self.enabled)[self.notifications requestPermissionIfNeeded];
 }
 - (BOOL)startAudio:(NSError **)error {
     if(self.player.isPlaying){[self setAlive:YES];return YES;}
@@ -99,6 +106,7 @@ static NSString *const enabledKey=@"GaEmulator.BackgroundRun";
     EmSetPresentationEnabled(YES);self.interrupted=NO;
     if(self.enabled && self.runningGames){
         NSError *error=nil;if(![self startAudio:&error])fprintf(stderr,"[BACKGROUND] foreground retry failed: %s\n",error.localizedDescription.UTF8String);
+        [self.notifications requestPermissionIfNeeded];
     }
 }
 - (void)interruption:(NSNotification *)notification {

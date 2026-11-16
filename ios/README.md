@@ -28,6 +28,8 @@ Tổng quan dùng chung `UIImage` đã có của từng tab, không chụp thêm
 
 **☰ → Bật chạy nền (thử nghiệm)** thử giữ game chạy khi chuyển app hoặc khóa màn hình bằng âm thanh nền không nghe thấy. Mặc định tắt; lựa chọn được lưu cho lần mở sau. iOS vẫn có thể ngắt tiến trình; cần thử IPA trên máy thật. Xem [background-running.md](docs/background-running.md).
 
+Cho phép thông báo để thấy trạng thái chạy nền và số game trên màn hình khóa/Trung tâm thông báo; chạm để mở lại app. Thông báo tự xóa khi quay lại, tắt chế độ hoặc kết thúc mọi game. Đây là thông báo có thể xóa, không phải thông báo ghim cố định và không giúp app chạy nền lâu hơn.
+
 ## Phạm vi hỗ trợ hiện tại
 
 | Thành phần | Trạng thái |
