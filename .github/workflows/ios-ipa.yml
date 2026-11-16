@@ -24,7 +24,9 @@ concurrency:
 
 jobs:
   build:
-    runs-on: macos-15
+    # Pin Intel: macos-15 selects arm64, whose hosted pool can be capacity-limited.
+    # Xcode still cross-compiles the iPhone binary with ARCHS=arm64 below.
+    runs-on: macos-15-intel
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4

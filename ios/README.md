@@ -16,7 +16,7 @@ Bản port iOS mới sử dụng API MIDP/CLDC của MicroEmulator, JVM thông d
 4. Giải nén artifact để lấy `MicroEmu-unsigned.ipa`, ký/cài bằng Sideloadly.
 5. Mở MicroEmu trên iPhone, chọn biểu tượng **nhập JAR** (mũi tên xuống), chọn game rồi chạm tên game để chạy.
 
-Workflow dùng runner `macos-15`, JDK 17 và Xcode. CI không cần certificate, provisioning profile hoặc Apple ID. App được build bằng SDK `iphoneos`, và bước đóng gói kiểm tra Mach-O ARM64 dành cho thiết bị để tránh đóng nhầm bản Simulator.
+Workflow dùng runner `macos-15-intel`, JDK 17 và Xcode. Nhãn Intel được chọn rõ để tránh hàng đợi macOS ARM64 khi GitHub thiếu máy; Xcode vẫn build IPA cho iPhone ARM64. CI không cần certificate, provisioning profile hoặc Apple ID. App được build bằng SDK `iphoneos`, và bước đóng gói kiểm tra Mach-O ARM64 dành cho thiết bị để tránh đóng nhầm bản Simulator.
 
 Đích triển khai: iOS 12 trở lên, iPhone/iPad. Lần đầu mở mỗi JAR, chọn preset, nhập kích thước (128–1920 pixel mỗi chiều), hoặc **Full screen**; các lần sau dùng thiết lập đã lưu và mở trực tiếp. Nhấn **ⓘ** cạnh JAR để sửa kích thước cho lần mở tiếp theo. Danh sách ưu tiên hiển thị tác giả từ manifest khi có, với thông tin vendor làm dự phòng. Full screen phủ vùng hiển thị; nếu lỗi ảnh trước khung hình đầu tiên, app thử một lần ở vùng vẽ nhỏ hơn rồi phóng lên. Chế độ kích thước cố định giữ tỷ lệ màn hình game. Có thể dùng Files → On My iPhone → MicroEmu để quản lý thư mục `Games`. **☰ → Chia sẻ log** xuất log của lần chạy hiện tại. Với game tự vẽ ô nhập trong Canvas, chạm ô nhập rồi dùng biểu tượng **bàn phím** để gửi chữ vào game; hộp nhập này che nội dung khi gõ.
 
