@@ -59,5 +59,5 @@ int main(void) {
     CHECK(wave[32]==2 && !wave[33] && wave[34]==16 && !wave[35]);
     CHECK(!memcmp(wave+36,"data",4) && u32(wave+40)==32000);
     for(size_t i=44;i<EM_BACKGROUND_WAVE_SIZE;i++)CHECK(wave[i]==0);
-    puts("PASS: background lifecycle, Now Playing states/metrics and bounded PCM WAV");return 0;
+    puts("PASS: background lifecycle, status states/metrics and bounded PCM WAV");return 0;
 }

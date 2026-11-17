@@ -17,7 +17,7 @@ module_spec.loader.exec_module(gen)
 class GenerateProjectTests(unittest.TestCase):
     def _create_fixture(self, root):
         ios = root / "ios"
-        for rel in ("App/MicroEmuApp.m", "App/BackgroundRunController.m", "App/BackgroundNowPlayingController.m", "native/bridge.c"):
+        for rel in ("App/MicroEmuApp.m", "App/BackgroundRunController.m", "App/BackgroundStatusController.m", "native/bridge.c"):
             target = ios / rel
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("", encoding="utf-8")
@@ -58,7 +58,8 @@ class GenerateProjectTests(unittest.TestCase):
             self.assertEqual(release["STRIP_INSTALLED_PRODUCT"], "YES")
             self.assertEqual(release["DEPLOYMENT_POSTPROCESSING"], "YES")
             self.assertEqual(release["GCC_SYMBOLS_PRIVATE_EXTERN"], "YES")
-            deps = [d["sdk"] for d in spec["targets"]["MicroEmu"]["dependencies"]]
+            app = spec["targets"]["MicroEmu"]
+            deps = [d["sdk"] for d in app["dependencies"] if "sdk" in d]
             self.assertNotIn("UniformTypeIdentifiers.framework", deps)
             self.assertIn("AVFoundation.framework", deps)
             self.assertIn("MediaPlayer.framework", deps)
@@ -68,7 +69,7 @@ class GenerateProjectTests(unittest.TestCase):
             self.assertIn({"path": "Runtime", "buildPhase": "resources", "type": "folder"}, sources)
             self.assertIn({"path": "App/MicroEmuApp.m"}, sources)
             self.assertIn({"path": "App/BackgroundRunController.m"}, sources)
-            self.assertIn({"path": "App/BackgroundNowPlayingController.m"}, sources)
+            self.assertIn({"path": "App/BackgroundStatusController.m"}, sources)
             self.assertIn({"path": "native/bridge.c"}, sources)
 
             run_mock.assert_called_once()
@@ -76,11 +77,36 @@ class GenerateProjectTests(unittest.TestCase):
             self.assertEqual(cmd[cmd.index("--project") + 1], str(ios))
             self.assertEqual(cmd[cmd.index("--project-root") + 1], str(ios))
 
+            # The iOS 12 host must not link/load Swift or ActivityKit at startup.
+            self.assertNotIn("ActivityKit.framework", deps)
+            self.assertFalse(any(s["path"].endswith(".swift") for s in app["sources"]))
+            self.assertIn({"target": "GaEmulatorLiveBridge", "embed": True, "link": False, "codeSign": False}, app["dependencies"])
+            self.assertIn({"target": "GaEmulatorStatus", "embed": True, "link": False, "codeSign": False}, app["dependencies"])
+            self.assertEqual(spec["settings"]["base"]["ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES"], "YES")
+            for name in ("GaEmulatorLiveBridge", "GaEmulatorStatus"):
+                target = spec["targets"][name]
+                self.assertEqual(target["deploymentTarget"], "16.1")
+                self.assertEqual(target["settings"]["base"]["IPHONEOS_DEPLOYMENT_TARGET"], "16.1")
+                self.assertIn({"path": "LiveActivity/Shared/GaEmulatorActivityAttributes.swift"}, target["sources"])
+            widget = spec["targets"]["GaEmulatorStatus"]
+            self.assertEqual(widget["type"], "app-extension")
+            self.assertEqual(widget["settings"]["base"]["APPLICATION_EXTENSION_API_ONLY"], "YES")
+
     def test_background_audio_declared_in_shipped_plist(self):
         with (gen.IOS / "App/Info.plist").open("rb") as source:
             info = plistlib.load(source)
         self.assertIn("audio", info["UIBackgroundModes"])
         self.assertNotIn("NSMicrophoneUsageDescription", info)
+        self.assertTrue(info["NSSupportsLiveActivities"])
+
+    def test_live_activity_bundle_metadata_matches_host(self):
+        host = plistlib.loads((gen.IOS / "App/Info.plist").read_bytes())
+        widget = plistlib.loads((gen.IOS / "LiveActivity/Widget/Info.plist").read_bytes())
+        bridge = plistlib.loads((gen.IOS / "LiveActivity/Bridge/Info.plist").read_bytes())
+        self.assertEqual(widget["NSExtension"]["NSExtensionPointIdentifier"], "com.apple.widgetkit-extension")
+        for info in (widget, bridge):
+            self.assertEqual(info["CFBundleVersion"], host["CFBundleVersion"])
+            self.assertEqual(info["CFBundleShortVersionString"], host["CFBundleShortVersionString"])
 
 
 if __name__ == "__main__":

@@ -28,7 +28,7 @@ Tổng quan dùng chung `UIImage` đã có của từng tab, không chụp thêm
 
 **☰ → Bật chạy nền (thử nghiệm)** thử giữ game chạy khi chuyển app hoặc khóa màn hình bằng âm thanh nền không nghe thấy. Mặc định tắt; lựa chọn được lưu cho lần mở sau. iOS vẫn có thể ngắt tiến trình; cần thử IPA trên máy thật. Xem [background-running.md](docs/background-running.md).
 
-Khi bật chạy nền và còn game, app cung cấp thẻ phát nền như Spotify với **GaEmulator đang chạy nền** và **RAM | CPU | Tab**, lấy số đo mỗi 5 giây. Không cần quyền thông báo. Play/Pause trên thẻ điều khiển chạy nền; tắt chế độ hoặc hết game sẽ gỡ thông tin thẻ. **Chế độ này có thể tạm dừng nhạc từ app khác.** Giao diện thẻ và việc giữ thẻ do iOS quyết định, chưa kiểm tra trên iPhone thật.
+Khi bật chạy nền và còn game, **iOS 16.1+** dùng Live Activity riêng với **RAM | CPU | Tab** và thời điểm cập nhật, không có điều khiển phát nhạc. Số đo được gửi khoảng 15 giây/lần khi app còn được chạy; iOS 16.2+ đánh dấu dữ liệu cũ sau 60 giây. Máy cũ hoặc không dùng được Live Activity sẽ dùng thông báo thường nếu được cho phép. Tắt chế độ hoặc hết game sẽ yêu cầu gỡ thẻ. Khi ký bằng Sideloadly, **giữ phần mở rộng GaEmulatorStatus trong PlugIns**. Phần hiển thị/ký cài mới chưa kiểm tra trên iPhone thật.
 
 ## Phạm vi hỗ trợ hiện tại
 

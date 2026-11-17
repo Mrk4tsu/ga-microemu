@@ -37,6 +37,7 @@ def generate(runtime, spec_only=False):
                 "TARGETED_DEVICE_FAMILY": "1,2", "ENABLE_BITCODE": "NO", "GENERATE_INFOPLIST_FILE": "NO",
                 "INFOPLIST_FILE": "App/Info.plist", "IPHONEOS_DEPLOYMENT_TARGET": "12.0",
                 "ASSETCATALOG_COMPILER_APPICON_NAME": "AppIcon",
+                "SWIFT_VERSION": "5.0", "ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES": "YES",
             },
             "configs": {
                 "Release": {
@@ -56,9 +57,33 @@ def generate(runtime, spec_only=False):
                 {"path": _relative_source(IOS / "App/Assets.xcassets")},
                 {"path": _relative_source(IOS / "Runtime"), "buildPhase": "resources", "type": "folder"}],
             "dependencies": [{"sdk": name + ".framework"} for name in
-                ("UIKit", "Foundation", "CoreGraphics", "CoreText", "QuartzCore", "AudioToolbox", "AVFoundation", "MediaPlayer", "UserNotifications", "Security")],
+                ("UIKit", "Foundation", "CoreGraphics", "CoreText", "QuartzCore", "AudioToolbox", "AVFoundation", "MediaPlayer", "UserNotifications", "Security")] + [
+                    {"target": "GaEmulatorLiveBridge", "embed": True, "link": False, "codeSign": False},
+                    {"target": "GaEmulatorStatus", "embed": True, "link": False, "codeSign": False}],
             "scheme": {"gatherCoverageData": False}}},
     }
+    # Keep the host Objective-C-only: iOS 12 must never load ActivityKit or the
+    # Swift concurrency runtime. The optional bridge loads via NSBundle on 16.1+.
+    shared = {"path": "LiveActivity/Shared/GaEmulatorActivityAttributes.swift"}
+    for name, product_type, folder, suffix in (
+        ("GaEmulatorLiveBridge", "framework", "Bridge", "livebridge"),
+        ("GaEmulatorStatus", "app-extension", "Widget", "status"),
+    ):
+        spec["targets"][name] = {
+            "type": product_type, "platform": "iOS", "deploymentTarget": "16.1",
+            "sources": [{"path": "LiveActivity/" + folder, "excludes": ["Info.plist"]}, shared],
+            "settings": {"base": {
+                "PRODUCT_BUNDLE_IDENTIFIER": "com.gamod.microemu." + suffix,
+                "INFOPLIST_FILE": "LiveActivity/" + folder + "/Info.plist",
+                "IPHONEOS_DEPLOYMENT_TARGET": "16.1", "SKIP_INSTALL": "YES",
+                "ASSETCATALOG_COMPILER_APPICON_NAME": "",
+                "ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES": "NO",
+                "APPLICATION_EXTENSION_API_ONLY": "YES" if folder == "Widget" else "NO",
+                "LD_RUNPATH_SEARCH_PATHS": ["$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks"],
+            }},
+            "dependencies": [{"sdk": sdk + ".framework"} for sdk in
+                (("Foundation", "UIKit", "ActivityKit") if folder == "Bridge" else ("SwiftUI", "WidgetKit", "ActivityKit"))],
+        }
     # Use Runtime (not Resources) at the .app root so iOS CFBundle does not
     # treat the shallow app bundle as a legacy Version-1 bundle layout.
     licenses = IOS / "Runtime/ThirdParty"

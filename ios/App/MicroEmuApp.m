@@ -1133,8 +1133,7 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
     if(self.presentedViewController || self.closingHost || self.choosingResolution || self.configuringMemory)return;
     [self cancelActiveInputs];
     BackgroundRunController *background=BackgroundRunController.shared;
-    NSString *message=[NSString stringWithFormat:@"%@\nChạy nền có thể tạm dừng nhạc từ app khác.",background.statusText];
-    UIAlertController *menu=[UIAlertController alertControllerWithTitle:@"GaEmulator" message:message preferredStyle:UIAlertControllerStyleActionSheet];
+    UIAlertController *menu=[UIAlertController alertControllerWithTitle:@"GaEmulator" message:background.statusText preferredStyle:UIAlertControllerStyleActionSheet];
     __weak GameController *weakSelf=self;
     [menu addAction:[UIAlertAction actionWithTitle:background.enabled?@"Tắt chạy nền":@"Bật chạy nền (thử nghiệm)" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
         [weakSelf dismissViewControllerAnimated:YES completion:^{[weakSelf setBackgroundRunEnabled:!background.enabled];}];

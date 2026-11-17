@@ -1,5 +1,5 @@
 #import "BackgroundRunController.h"
-#import "BackgroundNowPlayingController.h"
+#import "BackgroundStatusController.h"
 #import "AppPlatform.h"
 #import <AVFoundation/AVFoundation.h>
 #import <UIKit/UIKit.h>
@@ -16,12 +16,9 @@ static NSString *const enabledKey=@"GaEmulator.BackgroundRun";
 @property(nonatomic) NSUInteger runningGames;
 @property(nonatomic) BOOL interrupted;
 @property(nonatomic) BOOL sessionOwned;
-@property(nonatomic) BOOL pausedByUser;
-@property(nonatomic,strong) BackgroundNowPlayingController *nowPlaying;
+@property(nonatomic,strong) BackgroundStatusController *statusDisplay;
 - (BOOL)startAudio:(NSError **)error;
 - (void)stopAudio;
-- (void)pauseBackground;
-- (void)resumeBackground;
 @end
 @implementation BackgroundRunController
 + (instancetype)shared {
@@ -31,11 +28,7 @@ static NSString *const enabledKey=@"GaEmulator.BackgroundRun";
 - (instancetype)init {
     if((self=[super init])){
         _enabled=[NSUserDefaults.standardUserDefaults boolForKey:enabledKey];
-        _nowPlaying=[BackgroundNowPlayingController new];
-        __weak BackgroundRunController *weakSelf=self;
-        _nowPlaying.onPlay=^{[weakSelf resumeBackground];};
-        _nowPlaying.onPause=^{[weakSelf pauseBackground];};
-        _nowPlaying.onStop=^{[weakSelf setEnabled:NO error:nil];};
+        _statusDisplay=[BackgroundStatusController new];
         NSNotificationCenter *nc=NSNotificationCenter.defaultCenter;
         [nc addObserver:self selector:@selector(willResignActive:) name:UIApplicationWillResignActiveNotification object:nil];
         [nc addObserver:self selector:@selector(didBecomeActive:) name:UIApplicationDidBecomeActiveNotification object:nil];
@@ -48,11 +41,10 @@ static NSString *const enabledKey=@"GaEmulator.BackgroundRun";
 }
 - (NSString *)statusText {
     if(!self.enabled)return @"Chạy nền: Tắt";
-    if(self.pausedByUser)return @"Chạy nền: Tạm dừng";
     return self.runningGames && !self.keepingAlive?@"Chạy nền: Gián đoạn":@"Chạy nền: Bật";
 }
 - (void)notifyChanged {
-    [self.nowPlaying updateEnabled:self.enabled audioActive:self.keepingAlive userPaused:self.pausedByUser gameCount:self.runningGames];
+    [self.statusDisplay updateEnabled:self.enabled audioActive:self.keepingAlive gameCount:self.runningGames];
     [[NSNotificationCenter defaultCenter] postNotificationName:EmBackgroundRunChangedNotification object:self];
 }
 - (void)setAlive:(BOOL)alive {
@@ -62,9 +54,9 @@ static NSString *const enabledKey=@"GaEmulator.BackgroundRun";
     [self notifyChanged];
 }
 - (BOOL)setEnabled:(BOOL)enabled error:(NSError **)error {
-    BOOL previous=self.enabled,wasPaused=self.pausedByUser;self.enabled=enabled;self.pausedByUser=NO;
+    BOOL previous=self.enabled;self.enabled=enabled;
     if(enabled && self.runningGames && ![self startAudio:error]){
-        self.enabled=previous;self.pausedByUser=wasPaused;[self notifyChanged];return NO;
+        self.enabled=previous;[self notifyChanged];return NO;
     }
     if(!enabled)[self stopAudio];
     [NSUserDefaults.standardUserDefaults setBool:enabled forKey:enabledKey];
@@ -74,8 +66,8 @@ static NSString *const enabledKey=@"GaEmulator.BackgroundRun";
 - (void)setRunningGameCount:(NSUInteger)count {
     if(self.runningGames==count)return;
     self.runningGames=count;
-    if(!count){self.pausedByUser=NO;[self stopAudio];}
-    else if(self.enabled && !self.interrupted && !self.pausedByUser){
+    if(!count)[self stopAudio];
+    else if(self.enabled && !self.interrupted){
         NSError *error=nil;
         if(![self startAudio:&error]){fprintf(stderr,"[BACKGROUND] start failed: %s\n",error.localizedDescription.UTF8String);}
     }
@@ -83,12 +75,8 @@ static NSString *const enabledKey=@"GaEmulator.BackgroundRun";
 }
 - (BOOL)startAudio:(NSError **)error {
     if(self.player.isPlaying){[self setAlive:YES];return YES;}
-    // Register transport commands before activating playback; both are part
-    // of eligibility for the system's Now Playing surface.
-    [self.nowPlaying updateEnabled:self.enabled audioActive:NO userPaused:self.pausedByUser gameCount:self.runningGames];
     AVAudioSession *session=AVAudioSession.sharedInstance;
-    // A mixable session is not eligible for the system's Now Playing controls.
-    if(![session setCategory:AVAudioSessionCategoryPlayback mode:AVAudioSessionModeDefault options:0 error:error]
+    if(![session setCategory:AVAudioSessionCategoryPlayback mode:AVAudioSessionModeDefault options:AVAudioSessionCategoryOptionMixWithOthers error:error]
        || ![session setActive:YES error:error]){[self stopAudio];return NO;}
     self.sessionOwned=YES;
     if(!self.player){
@@ -113,20 +101,10 @@ static NSString *const enabledKey=@"GaEmulator.BackgroundRun";
     [self setAlive:NO];
 }
 - (void)willResignActive:(NSNotification *)notification {EmSetPresentationEnabled(NO);}
-- (void)pauseBackground {
-    if(!self.enabled || !self.runningGames)return;
-    self.pausedByUser=YES;[self stopAudio];[self notifyChanged];
-}
-- (void)resumeBackground {
-    if(!self.enabled || !self.runningGames)return;
-    self.pausedByUser=NO;NSError *error=nil;
-    if(![self startAudio:&error])fprintf(stderr,"[BACKGROUND] remote resume failed: %s\n",error.localizedDescription.UTF8String);
-    [self notifyChanged];
-}
 - (void)terminating:(NSNotification *)notification {[self setRunningGameCount:0];}
 - (void)didBecomeActive:(NSNotification *)notification {
     EmSetPresentationEnabled(YES);self.interrupted=NO;
-    if(self.enabled && self.runningGames && !self.pausedByUser){
+    if(self.enabled && self.runningGames){
         NSError *error=nil;if(![self startAudio:&error])fprintf(stderr,"[BACKGROUND] foreground retry failed: %s\n",error.localizedDescription.UTF8String);
     }
 }
@@ -138,7 +116,7 @@ static NSString *const enabledKey=@"GaEmulator.BackgroundRun";
     }else {
         self.interrupted=NO;
         BOOL mayResume=([notification.userInfo[AVAudioSessionInterruptionOptionKey] unsignedIntegerValue]&AVAudioSessionInterruptionOptionShouldResume)!=0;
-        if(self.enabled && self.runningGames && !self.pausedByUser && (mayResume || UIApplication.sharedApplication.applicationState==UIApplicationStateActive)){
+        if(self.enabled && self.runningGames && (mayResume || UIApplication.sharedApplication.applicationState==UIApplicationStateActive)){
             NSError *error=nil;if(![self startAudio:&error])fprintf(stderr,"[BACKGROUND] resume failed: %s\n",error.localizedDescription.UTF8String);
         }
     }
@@ -150,7 +128,7 @@ static NSString *const enabledKey=@"GaEmulator.BackgroundRun";
 - (void)mediaReset:(NSNotification *)notification {
     if(!NSThread.isMainThread){dispatch_async(dispatch_get_main_queue(),^{[self mediaReset:notification];});return;}
     self.player=nil;self.sessionOwned=NO;self.interrupted=NO;[self setAlive:NO];
-    if(self.enabled && self.runningGames && !self.pausedByUser){
+    if(self.enabled && self.runningGames){
         NSError *error=nil;if(![self startAudio:&error])fprintf(stderr,"[BACKGROUND] media reset retry failed: %s\n",error.localizedDescription.UTF8String);
     }
 }
