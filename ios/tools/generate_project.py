@@ -43,7 +43,6 @@ def generate(runtime, spec_only=False):
                 "Release": {
                     "DEPLOYMENT_POSTPROCESSING": "YES",
                     "STRIP_INSTALLED_PRODUCT": "YES",
-                    "STRIP_STYLE": "all",
                     "COPY_PHASE_STRIP": "YES",
                     "DEAD_CODE_STRIPPING": "YES",
                     "GCC_SYMBOLS_PRIVATE_EXTERN": "YES",
@@ -53,6 +52,7 @@ def generate(runtime, spec_only=False):
             },
         },
         "targets": {"MicroEmu": {"type": "application", "platform": "iOS",
+            "settings": {"configs": {"Release": {"STRIP_STYLE": "all"}}},
             "sources": [{"path": _relative_source(p)} for p in sorted(paths)] + [
                 {"path": _relative_source(IOS / "App/Assets.xcassets")},
                 {"path": _relative_source(IOS / "Runtime"), "buildPhase": "resources", "type": "folder"}],
@@ -80,7 +80,11 @@ def generate(runtime, spec_only=False):
                 "ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES": "NO",
                 "APPLICATION_EXTENSION_API_ONLY": "YES" if folder == "Widget" else "NO",
                 "LD_RUNPATH_SEARCH_PATHS": ["$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks"],
-            }},
+            }, "configs": {"Release": {
+                # Frameworks must retain symbols needed for dynamic binding.
+                # Inheriting the application's "all" policy makes strip fail.
+                "STRIP_STYLE": "debugging" if product_type == "framework" else "non-global",
+            }}},
             "dependencies": [{"sdk": sdk + ".framework"} for sdk in
                 (("Foundation", "UIKit", "ActivityKit") if folder == "Bridge" else ("SwiftUI", "WidgetKit", "ActivityKit"))],
         }

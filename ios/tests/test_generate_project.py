@@ -92,6 +92,28 @@ class GenerateProjectTests(unittest.TestCase):
             self.assertEqual(widget["type"], "app-extension")
             self.assertEqual(widget["settings"]["base"]["APPLICATION_EXTENSION_API_ONLY"], "YES")
 
+    def test_release_stripping_preserves_dynamic_framework_symbols(self):
+        with tempfile.TemporaryDirectory() as temp:
+            ios, runtime = self._create_fixture(Path(temp))
+            with mock.patch.object(gen, "IOS", ios):
+                gen.generate(runtime, spec_only=True)
+            spec = json.loads((ios / "build/project.json").read_text(encoding="utf-8"))
+
+        # The bridge is a dynamic library. Applying the app's "all" policy to
+        # it fails in Apple's strip tool on imported Swift/ActivityKit symbols.
+        project_release = spec["settings"]["configs"]["Release"]
+        self.assertNotIn("STRIP_STYLE", project_release)
+        for name, style in (("MicroEmu", "all"), ("GaEmulatorLiveBridge", "debugging"),
+                            ("GaEmulatorStatus", "non-global")):
+            with self.subTest(target=name):
+                target_settings = spec["targets"][name].get("settings", {})
+                effective = {**spec["settings"]["base"], **project_release,
+                             **target_settings.get("base", {}),
+                             **target_settings.get("configs", {}).get("Release", {})}
+                self.assertEqual(effective["STRIP_STYLE"], style)
+                self.assertEqual(effective["STRIP_INSTALLED_PRODUCT"], "YES")
+                self.assertEqual(effective["DEPLOYMENT_POSTPROCESSING"], "YES")
+
     def test_background_audio_declared_in_shipped_plist(self):
         with (gen.IOS / "App/Info.plist").open("rb") as source:
             info = plistlib.load(source)
