@@ -516,7 +516,7 @@ static void emRemoveGameData(NSString *deletedSuiteKey, NSArray<NSURL*> *remaini
     [nc addObserver:self selector:@selector(appWillEnterForeground) name:UIApplicationDidBecomeActiveNotification object:nil];
     [nc addObserver:self selector:@selector(backgroundRunChanged:) name:EmBackgroundRunChangedNotification object:nil];
     [nc addObserver:self selector:@selector(compactBackgroundPreviews:) name:EmMemoryWillCleanNotification object:nil];
-    self.displayLink=[CADisplayLink displayLinkWithTarget:self selector:@selector(frame)];self.displayLink.preferredFramesPerSecond=30;[self.displayLink addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
+    self.displayLink=[CADisplayLink displayLinkWithTarget:self selector:@selector(frame)];self.displayLink.preferredFramesPerSecond=60;[self.displayLink addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
     self.navigationController.interactivePopGestureRecognizer.enabled=NO;[UIApplication sharedApplication].idleTimerDisabled=YES;
     [self startMetricsTimer];
     [self updateMetrics];

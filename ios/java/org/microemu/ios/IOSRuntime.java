@@ -181,7 +181,7 @@ public final class IOSRuntime implements MicroEmulator, TabRunner {
         MIDletBridge.setMicroEmulator(this);
         device = new IOSDevice(this, width, height);
         DeviceFactory.setDevice(device);
-        EventDispatcher.maxFps = 30;
+        EventDispatcher.maxFps = 60;
         stores = new IOSRecordStores(new File(rmsPath, suiteKey())); stores.init(this);
         File temporary = new File(rmsPath, "tmp"); temporary.mkdirs();
         if (System.getProperty("java.io.tmpdir") == null) System.setProperty("java.io.tmpdir", temporary.getAbsolutePath());
@@ -234,7 +234,7 @@ public final class IOSRuntime implements MicroEmulator, TabRunner {
         if (event[0] == 15) {
             boolean nextSleep = event[1] != 0;
             sleeping = nextSleep;
-            EventDispatcher.maxFps = nextSleep ? 4 : 30;
+            EventDispatcher.maxFps = nextSleep ? 4 : 60;
             if (!nextSleep && display != null) {
                 if (device != null) device.presentScreen();
                 display.repaint();

@@ -273,7 +273,7 @@ public final class MainActivity extends Activity implements NativeEngine.Listene
     }
     private final Runnable poll=new Runnable() { public void run() {
         if(resumed && active!=0) { int[] frame=NativeEngine.takeFrame(active); if(frame!=null) { screen.frame(frame); Tab tab=tabs.get(active); if(tab!=null) tab.frame=screen.frame(); } }
-        ui.postDelayed(this,33);
+        ui.postDelayed(this,16);
     }};
     @Override public void status(int id,String value) {
         Tab tab=tabs.get(id); if(tab!=null) tab.status=value;
