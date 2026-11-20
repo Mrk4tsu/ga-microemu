@@ -43,28 +43,30 @@ def main(executable, javac, selected=None):
                             ("\r\nTest-Stop: true" if name == "TextBoxStop" else "") +
                             "\r\nTest-Port: %d\r\n\r\n" % server.server_address[1])
                     args = [str(executable), str(runtime / "minijvm_rt.jar"), str(runtime / "microemu-ios.jar"),
-                            str(game), str(root / ("rms-" + name)), "4", str(root / (name + ".png"))]
+                            str(game), str(root / ("rms-" + name)), "8", str(root / (name + ".png"))]
                     if name == "SocketStopMIDlet":
                         events = root / "stop.txt"
-                        events.write_text("1200 10 0 0\n", encoding="utf-8")
+                        events.write_text("200 10 0 0\n", encoding="utf-8")
                         args.append(str(events))
                     if name.startswith("TextBox"):
                         events = root / (name + "-events.txt")
-                        events.write_text("1200 4 40 40\n1400 6 40 40\n" +
-                                          ("2500 10 0 0\n" if name == "TextBoxStop" else ""), encoding="utf-8")
+                        events.write_text("200 4 40 40\n400 6 40 40\n" +
+                                          ("1200 10 0 0\n" if name == "TextBoxStop" else ""), encoding="utf-8")
                         args.append(str(events))
                     environment = os.environ.copy()
                     if name == "SocketStopMIDlet":
                         environment["MICROEMU_ALLOW_NO_FRAME"] = "1"
+                        environment["MICROEMU_SCHEDULE_ON_STATUS"] = "1"
                     elif name == "InputPressureMIDlet":
                         environment["MICROEMU_MULTI_TAB"] = "1"
                         environment["MICROEMU_INPUT_STRESS"] = "1"
                     if name.startswith("TextBox"):
                         environment["MICROEMU_HOST_MODE"] = "1"
+                        environment["MICROEMU_SCHEDULE_ON_STATUS"] = "1"
                         if name == "TextBoxMIDlet": environment["MICROEMU_TEST_TEXT_INPUT"] = "1"
                     try:
                         result = subprocess.run(args, capture_output=True, text=True, encoding="utf-8",
-                                                errors="replace", timeout=10, env=environment,
+                                                errors="replace", timeout=15, env=environment,
                                                 input="inputtest\ntestpass\n" if name == "TextBoxMIDlet" else None)
                     except subprocess.TimeoutExpired as error:
                         print(name + ": TIMEOUT")

@@ -1,6 +1,7 @@
 package lifecycle;
 import javax.microedition.lcdui.*;
 import javax.microedition.midlet.MIDlet;
+import org.microemu.ios.NativeBridge;
 
 /** Open account/password editors from a Canvas and repaint after both callbacks. */
 public final class TextBoxMIDlet extends MIDlet implements CommandListener {
@@ -18,6 +19,7 @@ public final class TextBoxMIDlet extends MIDlet implements CommandListener {
             protected void pointerPressed(int x, int y) { if (editor == null) open(false); }
         };
         Display.getDisplay(this).setCurrent(canvas);
+        NativeBridge.status("UI_ARM_SCHEDULE");
         new Thread(new Runnable() {
             public void run() {
                 long end = System.currentTimeMillis() + 5000;

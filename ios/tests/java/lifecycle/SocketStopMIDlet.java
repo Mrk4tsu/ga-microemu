@@ -3,6 +3,7 @@ import java.io.InputStream;
 import javax.microedition.io.*;
 import javax.microedition.lcdui.*;
 import javax.microedition.midlet.MIDlet;
+import org.microemu.ios.NativeBridge;
 
 /** A stopped MIDlet may leave a blocking reader for VM shutdown to cancel. */
 public final class SocketStopMIDlet extends MIDlet {
@@ -14,6 +15,7 @@ public final class SocketStopMIDlet extends MIDlet {
             new Thread(new Runnable() {
                 public void run() {
                     System.out.println("SOCKET_READER_READY");
+                    NativeBridge.status("UI_ARM_SCHEDULE");
                     try { input.read(); } catch (Exception expected) { }
                     finally { try { input.close(); connection.close(); } catch (Exception ignored) { } }
                 }
