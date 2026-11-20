@@ -35,6 +35,28 @@ static int have_font;
 static long control_offset;
 static double control_scanned;
 static int background_paused;
+static int finish_present_test, finish_present_armed, finish_present_reached;
+static mtx_t finish_present_lock;
+static cnd_t finish_present_condition;
+
+/* Force presentation (holding bridge.c's surface lock) to overlap completion
+   (holding host_lock). This catches host -> surface / surface -> host inversion. */
+static void finish_present_overlap(int tab_id, int finishing) {
+    if (!finish_present_test || tab_id != (finishing ? 1 : 2)) return;
+    mtx_lock(&finish_present_lock);
+    if (finishing) {
+        finish_present_armed = 1;
+        struct timespec deadline; timespec_get(&deadline, TIME_UTC); deadline.tv_sec += 3;
+        while (!finish_present_reached) {
+            if (cnd_timedwait(&finish_present_condition, &finish_present_lock, &deadline) != thrd_success) break;
+        }
+        puts(finish_present_reached ? "FINISH_PRESENT_OVERLAP" : "FINISH_PRESENT_FAIL");
+    } else if (finish_present_armed) {
+        finish_present_reached = 1;
+        cnd_signal(&finish_present_condition);
+    }
+    mtx_unlock(&finish_present_lock);
+}
 typedef struct { int ms, type, a, b; } Scheduled;
 static Scheduled schedule[256];
 static int scheduled, next_event;
@@ -68,7 +90,15 @@ void em_platform_text(EmSurface *s, const char *text, const int *a) {
 }
 void em_platform_present(int tab_id, const EmSurface *s) {
     call_once(&host_lock_once, init_host_lock);
-    mtx_lock(&host_lock);
+    if (finish_present_test && tab_id == 2) {
+        /* Signal while waiting too: completion may acquire host_lock between
+           this callback's entry and its first attempt to take the lock. */
+        const struct timespec delay = {0, 1000000};
+        while (mtx_trylock(&host_lock) != thrd_success) {
+            finish_present_overlap(tab_id, 0);
+            thrd_sleep(&delay, NULL);
+        }
+    } else mtx_lock(&host_lock);
     frames++;
     if (tab_id >= 0 && tab_id < 8) tab_frames[tab_id]++;
     double now = seconds();
@@ -165,12 +195,15 @@ static void test_event(int type, int a, int b, int c, const char *text) {
 }
 void em_platform_tab_finished(int tab_id, int result) {
     call_once(&host_lock_once, init_host_lock);
+    /* Presentation enters this host while holding the bridge's surface lock.
+       Collect resource stats before host_lock to keep that same lock order. */
+    EmResourceStats stats;
+    em_tab_resource_stats(tab_id, &stats);
     mtx_lock(&host_lock);
     if (tab_id >= 0 && tab_id < 8) tab_finished[tab_id] = result == 0 ? 1 : -1;
     printf("[TAB_FINISHED tab=%d result=%d]\n", tab_id, result);
+    finish_present_overlap(tab_id, 1);
     if (getenv("MICROEMU_SECOND_JAR") && tab_id == 1) isolation_frames_at_stop = tab_frames[2];
-    EmResourceStats stats;
-    em_tab_resource_stats(tab_id, &stats);
     printf("[RESOURCES tab=%d generation=%llu surfaces=%zu bytes=%zu tcp_sockets=%d queue=%zu zip_streams=%d]\n", tab_id,
         (unsigned long long)stats.generation, stats.surface_count, stats.surface_bytes, stats.socket_count, stats.queue_bytes,stats.zip_count);
     if (stats.surface_count || stats.surface_bytes || stats.socket_count || stats.queue_bytes || stats.zip_count) resource_failure = 1;
@@ -185,6 +218,7 @@ void em_platform_tab_finished(int tab_id, int result) {
         em_host_shutdown();
     }
     mtx_unlock(&host_lock);
+    if (finish_present_test && tab_id == 1) em_host_close_tab(2);
 }
 void em_platform_browse(const char *s) { printf("[BROWSE] %s\n", s); }
 void em_platform_vibrate(int ms) { }
@@ -262,6 +296,11 @@ int main(int argc, char **argv) {
     if (argc < 5) {
         fprintf(stderr, "Usage: microemu-headless bootstrap.jar emulator.jar game.jar rms-dir [seconds] [frame.png] [events.txt] [font.ttf]\n");
         return 2;
+    }
+    finish_present_test = getenv("MICROEMU_FINISH_PRESENT_TEST") != NULL;
+    if (finish_present_test) {
+        mtx_init(&finish_present_lock, mtx_plain);
+        cnd_init(&finish_present_condition);
     }
     if (argc > 5) stop_after = atof(argv[5]);
     if (argc > 6) frame_path = argv[6];

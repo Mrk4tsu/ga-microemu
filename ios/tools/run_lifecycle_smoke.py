@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise render locks, Stop with an idle TCP reader, and text input during GC."""
+"""Exercise render/completion locks, Stop with an idle TCP reader, and input during GC."""
 import argparse
 import os
 from pathlib import Path
@@ -32,7 +32,7 @@ def main(executable, javac, selected=None):
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             try:
-                for name in ((selected,) if selected else ("RenderLockMIDlet", "SocketStopMIDlet", "InputPressureMIDlet", "TextBoxMIDlet", "TextBoxStop")):
+                for name in ((selected,) if selected else ("RenderLockMIDlet", "SocketStopMIDlet", "InputPressureMIDlet", "FinishPresentMIDlet", "TextBoxMIDlet", "TextBoxStop")):
                     game = root / (name + ".jar")
                     with zipfile.ZipFile(game, "w", zipfile.ZIP_DEFLATED) as jar:
                         for file in classes.rglob("*.class"):
@@ -60,6 +60,16 @@ def main(executable, javac, selected=None):
                     elif name == "InputPressureMIDlet":
                         environment["MICROEMU_MULTI_TAB"] = "1"
                         environment["MICROEMU_INPUT_STRESS"] = "1"
+                    elif name == "FinishPresentMIDlet":
+                        survivor = root / "FinishPresentSurvivor.jar"
+                        with zipfile.ZipFile(game) as source, zipfile.ZipFile(survivor, "w", zipfile.ZIP_DEFLATED) as jar:
+                            for entry in source.infolist():
+                                data = source.read(entry.filename)
+                                if entry.filename == "META-INF/MANIFEST.MF":
+                                    data = data.replace(b"\r\n\r\n", b"\r\nTest-Keep-Running: true\r\n\r\n")
+                                jar.writestr(entry, data)
+                        environment.update(MICROEMU_MULTI_TAB="1", MICROEMU_FINISH_PRESENT_TEST="1",
+                                           MICROEMU_SECOND_JAR=str(survivor))
                     if name.startswith("TextBox"):
                         environment["MICROEMU_HOST_MODE"] = "1"
                         environment["MICROEMU_SCHEDULE_ON_STATUS"] = "1"
@@ -75,9 +85,9 @@ def main(executable, javac, selected=None):
                         raise SystemExit("Lifecycle regression: blocked renderer or VM shutdown")
                     print(result.stdout)
                     print(result.stderr)
-                    marker = {"RenderLockMIDlet": "RENDER_LOCK_PASS", "SocketStopMIDlet": "SOCKET_READER_READY", "InputPressureMIDlet": "INPUT_PRESSURE_PASS", "TextBoxMIDlet": "TEXTBOX_PASS", "TextBoxStop": "TEXTBOX_OPEN"}[name]
+                    marker = {"RenderLockMIDlet": "RENDER_LOCK_PASS", "SocketStopMIDlet": "SOCKET_READER_READY", "InputPressureMIDlet": "INPUT_PRESSURE_PASS", "FinishPresentMIDlet": "FINISH_PRESENT_OVERLAP", "TextBoxMIDlet": "TEXTBOX_PASS", "TextBoxStop": "TEXTBOX_OPEN"}[name]
                     expected = 2 if name == "InputPressureMIDlet" else 1
-                    if result.returncode or result.stdout.count(marker) != expected or "RENDER_LOCK_FAIL" in result.stdout or "INPUT_PRESSURE_FAIL" in result.stdout or "TEXTBOX_FAIL" in result.stdout:
+                    if result.returncode or result.stdout.count(marker) != expected or "RENDER_LOCK_FAIL" in result.stdout or "INPUT_PRESSURE_FAIL" in result.stdout or "FINISH_PRESENT_FAIL" in result.stdout or "TEXTBOX_FAIL" in result.stdout:
                         raise SystemExit(name + " failed: status " + str(result.returncode))
                     print("PASS: " + name)
             finally:
@@ -88,6 +98,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--executable", type=Path, required=True)
     parser.add_argument("--javac", default="javac")
-    parser.add_argument("--case", choices=("RenderLockMIDlet", "SocketStopMIDlet", "InputPressureMIDlet", "TextBoxMIDlet", "TextBoxStop"))
+    parser.add_argument("--case", choices=("RenderLockMIDlet", "SocketStopMIDlet", "InputPressureMIDlet", "FinishPresentMIDlet", "TextBoxMIDlet", "TextBoxStop"))
     args = parser.parse_args()
     main(args.executable.resolve(), args.javac, args.case)
